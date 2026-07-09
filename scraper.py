@@ -72,6 +72,15 @@ def init_db(conn):
             UNIQUE(repo_name, fetch_date, path)
         )
     """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pypi_downloads (
+            repo_name TEXT,
+            date TEXT,
+            downloads INTEGER,
+            UNIQUE(repo_name, date)
+        )
+    """)
     conn.commit()
 
 def fetch_and_store(conn):
@@ -83,7 +92,7 @@ def fetch_and_store(conn):
         logging.info(f"Scraping telemetry for {repo}...")
         
         # 1. Traffic Views
-        url_views = f"https://api.github.com/repos/{repo}/traffic/views"
+        url_views = f"https://api.github.com/repos/){repo}/traffic/views"
         resp_views = requests.get(url_views, headers=HEADERS)
         if resp_views.status_code == 200:
             for view in resp_views.json().get('views', []):
@@ -96,7 +105,7 @@ def fetch_and_store(conn):
             logging.error(f"Failed to fetch views for {repo}: {resp_views.status_code} - {resp_views.text}")
 
         # 2. Traffic Clones
-        url_clones = f"https://api.github.com/repos/{repo}/traffic/clones"
+        url_clones = f"https://api.github.com/repos/){repo}/traffic/clones"
         resp_clones = requests.get(url_clones, headers=HEADERS)
         if resp_clones.status_code == 200:
             for clone in resp_clones.json().get('clones', []):
@@ -109,7 +118,7 @@ def fetch_and_store(conn):
             logging.error(f"Failed to fetch clones for {repo}: {resp_clones.status_code} - {resp_clones.text}")
 
         # 3. Referring Sites
-        url_referrers = f"https://api.github.com/repos/{repo}/traffic/popular/referrers"
+        url_referrers = f"https://api.github.com/repos/){repo}/traffic/popular/referrers"
         resp_refs = requests.get(url_referrers, headers=HEADERS)
         if resp_refs.status_code == 200:
             for ref in resp_refs.json():
@@ -121,7 +130,7 @@ def fetch_and_store(conn):
             logging.error(f"Failed to fetch referrers for {repo}: {resp_refs.status_code} - {resp_refs.text}")
 
         # 4. Popular Content (Paths)
-        url_paths = f"https://api.github.com/repos/{repo}/traffic/popular/paths"
+        url_paths = f"https://api.github.com/repos/){repo}/traffic/popular/paths"
         resp_paths = requests.get(url_paths, headers=HEADERS)
         if resp_paths.status_code == 200:
             for path_data in resp_paths.json():
@@ -131,6 +140,24 @@ def fetch_and_store(conn):
                 """, (repo, today_str, path_data['path'], path_data['count'], path_data['uniques']))
         else:
             logging.error(f"Failed to fetch paths for {repo}: {resp_paths.status_code} - {resp_paths.text}")
+
+        # 5. PyPI Downloads
+        package_name = repo.split('/')[-1]
+        url_pypi = f"https://pypistats.org/api/packages/){package_name}/overall"
+        resp_pypi = requests.get(url_pypi)
+        if resp_pypi.status_code == 200:
+            pypi_data = resp_pypi.json().get('data', [])
+            for row in pypi_data:
+                # Filter to only capture clean downloads without mirrors
+                if row.get('category') == 'without_mirrors':
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO pypi_downloads (repo_name, date, downloads)
+                        VALUES (?, ?, ?)
+                    """, (repo, row['date'], row['downloads']))
+        elif resp_pypi.status_code == 404:
+            logging.info(f"No PyPI package found for {package_name}, skipping PyPI stats.")
+        else:
+            logging.error(f"Failed to fetch PyPI stats for {package_name}: {resp_pypi.status_code} - {resp_pypi.text}")
 
     conn.commit()
     logging.info("Telemetry successfully committed to SQLite.")
