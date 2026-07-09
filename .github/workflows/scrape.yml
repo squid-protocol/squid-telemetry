@@ -34,7 +34,7 @@ jobs:
         run: |
           git config user.name "squid-telemetry-bot"
           git config user.email "telemetry@squidprotocol.local"
-          git add traffic_metrics.db
+          git add --force traffic_metrics.db
           
           # Only commit and push if the database actually changed
           git diff --quiet && git diff --staged --quiet || (git commit -m "data: update telemetry database" && git push origin main)
