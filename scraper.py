@@ -141,24 +141,24 @@ def fetch_and_store(conn):
         else:
             logging.error(f"Failed to fetch paths for {repo}: {resp_paths.status_code} - {resp_paths.text}")
 
-        # 5. PyPI Downloads
+        # 5. PePy Downloads
         package_name = repo.split('/')[-1]
-        url_pypi = f"https://pypistats.org/api/packages/){package_name}/overall"
-        resp_pypi = requests.get(url_pypi)
-        if resp_pypi.status_code == 200:
-            pypi_data = resp_pypi.json().get('data', [])
-            for row in pypi_data:
-                # Filter to only capture clean downloads without mirrors
-                if row.get('category') == 'without_mirrors':
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO pypi_downloads (repo_name, date, downloads)
-                        VALUES (?, ?, ?)
-                    """, (repo, row['date'], row['downloads']))
-        elif resp_pypi.status_code == 404:
-            logging.info(f"No PyPI package found for {package_name}, skipping PyPI stats.")
+        url_pepy = f"https://api.pepy.tech/api/v2/projects/{package_name}"
+        resp_pepy = requests.get(url_pepy)
+        if resp_pepy.status_code == 200:
+            pepy_data = resp_pepy.json().get('downloads', {})
+            for date_str, version_data in pepy_data.items():
+                # PePy returns a dictionary of versions and their daily counts, so we sum them
+                daily_total = sum(version_data.values())
+                cursor.execute("""
+                    INSERT OR REPLACE INTO pypi_downloads (repo_name, date, downloads)
+                    VALUES (?, ?, ?)
+                """, (repo, date_str, daily_total))
+        elif resp_pepy.status_code == 404:
+            logging.info(f"No PePy package found for {package_name}, skipping.")
         else:
-            logging.error(f"Failed to fetch PyPI stats for {package_name}: {resp_pypi.status_code} - {resp_pypi.text}")
-
+            logging.error(f"Failed to fetch PePy stats for {package_name}: {resp_pepy.status_code} - {resp_pepy.text}")
+            
     conn.commit()
     logging.info("Telemetry successfully committed to SQLite.")
     
