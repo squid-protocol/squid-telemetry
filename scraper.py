@@ -92,6 +92,8 @@ def fetch_and_store(conn):
                     INSERT OR REPLACE INTO traffic_views (repo_name, date, total_views, unique_visitors)
                     VALUES (?, ?, ?, ?)
                 """, (repo, date_str, view['count'], view['uniques']))
+        else:
+            logging.error(f"Failed to fetch views for {repo}: {resp_views.status_code} - {resp_views.text}")
 
         # 2. Traffic Clones
         url_clones = f"https://api.github.com/repos/{repo}/traffic/clones"
@@ -103,6 +105,8 @@ def fetch_and_store(conn):
                     INSERT OR REPLACE INTO traffic_clones (repo_name, date, total_clones, unique_cloners)
                     VALUES (?, ?, ?, ?)
                 """, (repo, date_str, clone['count'], clone['uniques']))
+        else:
+            logging.error(f"Failed to fetch clones for {repo}: {resp_clones.status_code} - {resp_clones.text}")
 
         # 3. Referring Sites
         url_referrers = f"https://api.github.com/repos/{repo}/traffic/popular/referrers"
@@ -113,6 +117,8 @@ def fetch_and_store(conn):
                     INSERT OR REPLACE INTO referring_sites (repo_name, fetch_date, site, total_views, unique_visitors)
                     VALUES (?, ?, ?, ?, ?)
                 """, (repo, today_str, ref['referrer'], ref['count'], ref['uniques']))
+        else:
+            logging.error(f"Failed to fetch referrers for {repo}: {resp_refs.status_code} - {resp_refs.text}")
 
         # 4. Popular Content (Paths)
         url_paths = f"https://api.github.com/repos/{repo}/traffic/popular/paths"
@@ -123,6 +129,8 @@ def fetch_and_store(conn):
                     INSERT OR REPLACE INTO popular_content (repo_name, fetch_date, path, total_views, unique_visitors)
                     VALUES (?, ?, ?, ?, ?)
                 """, (repo, today_str, path_data['path'], path_data['count'], path_data['uniques']))
+        else:
+            logging.error(f"Failed to fetch paths for {repo}: {resp_paths.status_code} - {resp_paths.text}")
 
     conn.commit()
     logging.info("Telemetry successfully committed to SQLite.")
