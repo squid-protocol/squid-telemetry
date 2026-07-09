@@ -17,13 +17,13 @@ TARGET_REPOS = [
 ]
 
 DB_NAME = "traffic_metrics.db"
-GITHUB_PAT = os.environ.get("GITHUB_PAT")
+TRAFFIC_READ_PAT = os.environ.get("TRAFFIC_READ_PAT")
 
-if not GITHUB_PAT:
-    raise ValueError("GITHUB_PAT environment variable is missing!")
+if not TRAFFIC_READ_PAT:
+    raise ValueError("TRAFFIC_READ_PAT environment variable is missing!")
 
 HEADERS = {
-    "Authorization": f"token {GITHUB_PAT}",
+    "Authorization": f"token {TRAFFIC_READ_PAT}",
     "Accept": "application/vnd.github.v3+json"
 }
 
