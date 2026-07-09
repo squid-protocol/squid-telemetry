@@ -91,3 +91,4 @@ telemetry_out/
 *.log
 changelog.txt
 full_changelog.txt
+!traffic_metrics.db
