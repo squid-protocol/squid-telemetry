@@ -1,0 +1,40 @@
+name: Squid Telemetry Scraper
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs at 00:00 UTC daily
+  workflow_dispatch:    # Allows manual triggering from the Actions tab
+
+permissions:
+  contents: write       # Grants the GITHUB_TOKEN permission to push the DB file
+
+jobs:
+  scrape-and-store:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Run Telemetry Scraper
+        env:
+          GITHUB_PAT: ${{ secrets.TRAFFIC_READ_PAT }}
+        run: python scraper.py
+
+      - name: Commit and Push Database
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "squid-telemetry-bot"
+          git config user.email "telemetry@squidprotocol.local"
+          git add traffic_metrics.db
+          
+          # Only commit and push if the database actually changed
+          git diff --quiet && git diff --staged --quiet || (git commit -m "data: update telemetry database" && git push origin main)
