@@ -26,6 +26,7 @@ jobs:
       - name: Run Telemetry Scraper
         env:
           TRAFFIC_READ_PAT: ${{ secrets.TRAFFIC_READ_PAT }}
+          GITLAB_READ_PAT: ${{ secrets.GITLAB_READ_PAT }}
         run: python scraper.py
 
       - name: Commit and Push Database

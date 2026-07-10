@@ -18,6 +18,7 @@ TARGET_REPOS = [
 
 DB_NAME = "traffic_metrics.db"
 GITHUB_PAT = os.environ.get("TRAFFIC_READ_PAT")
+GITLAB_PAT = os.environ.get("GITLAB_READ_PAT")
 
 if not GITHUB_PAT:
     raise ValueError("TRAFFIC_READ_PAT environment variable is missing!")
@@ -26,6 +27,11 @@ HEADERS = {
     "Authorization": f"token {GITHUB_PAT}",
     "Accept": "application/vnd.github.v3+json"
 }
+
+GITLAB_HEADERS = {
+    "Authorization": f"Bearer {GITLAB_PAT}",
+    "Content-Type": "application/json"
+} if GITLAB_PAT else {}
 
 def init_db(conn):
     """Forges the SQLite schema if it does not exist."""
@@ -78,6 +84,15 @@ def init_db(conn):
             repo_name TEXT,
             date TEXT,
             downloads INTEGER,
+            UNIQUE(repo_name, date)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gitlab_catalog_usage (
+            repo_name TEXT,
+            date TEXT,
+            usage_count_30_days INTEGER,
             UNIQUE(repo_name, date)
         )
     """)
@@ -158,6 +173,34 @@ def fetch_and_store(conn):
             logging.info(f"No PyPI package found for {package_name}, skipping PyPI stats.")
         else:
             logging.error(f"Failed to fetch PyPI stats for {package_name}: {resp_pypi.status_code} - {resp_pypi.text}")
+
+        # 6. GitLab CI/CD Catalog Usage (GraphQL)
+        if repo == "squid-protocol/gitgalaxy" and GITLAB_PAT:
+            gitlab_path = "squid-protocol1/gitgalaxy"
+            query = """
+            query getCiCatalogResourceComponents($fullPath: ID!) {
+              ciCatalogResource(fullPath: $fullPath) {
+                last30DayUsageCount
+              }
+            }
+            """
+            url_gitlab = "[https://gitlab.com/api/graphql](https://gitlab.com/api/graphql)"
+            resp_gitlab = requests.post(
+                url_gitlab, 
+                headers=GITLAB_HEADERS, 
+                json={"query": query, "variables": {"fullPath": gitlab_path}}
+            )
+            
+            if resp_gitlab.status_code == 200:
+                gl_data = resp_gitlab.json().get('data', {}).get('ciCatalogResource')
+                if gl_data:
+                    usage_count = gl_data.get('last30DayUsageCount', 0)
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO gitlab_catalog_usage (repo_name, date, usage_count_30_days)
+                        VALUES (?, ?, ?)
+                    """, (repo, today_str, usage_count))
+            else:
+                logging.error(f"Failed to fetch GitLab usage for {gitlab_path}: {resp_gitlab.status_code} - {resp_gitlab.text}")
 
     conn.commit()
     logging.info("Telemetry successfully committed to SQLite.")
