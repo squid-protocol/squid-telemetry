@@ -184,7 +184,7 @@ def fetch_and_store(conn):
               }
             }
             """
-            url_gitlab = "[https://gitlab.com/api/graphql](https://gitlab.com/api/graphql)"
+            url_gitlab = "https://gitlab.com/api/graphql"
             resp_gitlab = requests.post(
                 url_gitlab, 
                 headers=GITLAB_HEADERS, 
