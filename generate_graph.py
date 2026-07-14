@@ -151,17 +151,29 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     if df.empty: return
     
     df = df.sort_values('date') 
+    df['date_dt'] = pd.to_datetime(df['date'])
     
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.fill_between(df['date'], df['views'], color='#ADD8E6', alpha=0.5, label='Unique Profile Views (Intent)')
-    ax.plot(df['date'], df['downloads'], color='#00008B', linewidth=3, marker='o', label='Unique Fetches (Execution)')
+    
+    # Render both datasets as lines with identical thicknesses
+    ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, marker='o', label='Unique Profile Views (Intent)')
+    ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, marker='o', label='Unique Fetches (Execution)')
+    
+    # Calculate offset for labels based on the max value in the graph
+    y_offset = df[['views', 'downloads']].max().max() * 0.02
+    
+    # Add numerical data labels directly above each point
+    for x, y in zip(df['date_dt'], df['views']):
+        ax.text(x, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9, color='#4682B4', fontweight='bold')
+    for x, y in zip(df['date_dt'], df['downloads']):
+        ax.text(x, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9, color='#00008B', fontweight='bold')
     
     ax.set_title("GitGalaxy Conversion Funnel (14-Day Rolling)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Count", fontsize=12, labelpad=10)
     
     import matplotlib.dates as mdates
-    ax.xaxis.set_major_locator(mdates.DayLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     plt.xticks(rotation=45)
     
     ax.legend(loc='upper left')
@@ -171,58 +183,64 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     plt.tight_layout()
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
-
+    
 def generate_discovery_engine(db_path: str, output_path: str):
     conn = sqlite3.connect(db_path)
     query = """
-        SELECT site, SUM(unique_visitors) as unique_visitors 
+        SELECT fetch_date as date, site, SUM(unique_visitors) as unique_visitors 
         FROM referring_sites 
         WHERE repo_name = 'squid-protocol/gitgalaxy' 
-          AND fetch_date = (SELECT MAX(fetch_date) FROM referring_sites)
-        GROUP BY site
-        ORDER BY unique_visitors ASC
-        LIMIT 10;
+          AND fetch_date IN (SELECT DISTINCT fetch_date FROM referring_sites WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY fetch_date DESC LIMIT 14)
+        GROUP BY date, site
+        ORDER BY date ASC;
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
     
     if df.empty: return
     
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.barh(df['site'], df['unique_visitors'], color='#2ca02c')
+    df['date_dt'] = pd.to_datetime(df['date'])
+    pivot_df = df.pivot(index='date_dt', columns='site', values='unique_visitors').fillna(0)
     
-    ax.set_title("Top Discovery Channels (Active 14-Day Window)", fontsize=16, pad=20, fontweight='bold')
-    ax.set_xlabel("Unique Visitors", fontsize=12)
+    # Filter to top 5 performing channels to keep the graph readable
+    top_sites = pivot_df.sum().nlargest(5).index
+    pivot_df = pivot_df[top_sites]
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for site in pivot_df.columns:
+        ax.plot(pivot_df.index, pivot_df[site], linewidth=2, marker='o', label=site)
+        
+    ax.set_title("Top Discovery Channels (14-Day Rolling Timeline)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date", fontsize=12, labelpad=10)
+    ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
+    
+    import matplotlib.dates as mdates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.xticks(rotation=45)
+    
+    # Push legend outside the plot to avoid overlapping the data lines
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.xaxis.set_visible(False) 
-    
-    for bar in bars:
-        width = bar.get_width()
-        ax.text(width + 0.2, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
-                va='center', ha='left', fontsize=10, fontweight='bold')
-                
+    ax.grid(True, linestyle='--', alpha=0.3)
     plt.tight_layout()
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
-
 def generate_feature_heatmap(db_path: str, output_path: str):
     conn = sqlite3.connect(db_path)
     query = """
-        SELECT path, SUM(unique_visitors) as unique_visitors 
+        SELECT fetch_date as date, path, SUM(unique_visitors) as unique_visitors 
         FROM popular_content 
         WHERE repo_name = 'squid-protocol/gitgalaxy' 
-          AND fetch_date = (SELECT MAX(fetch_date) FROM popular_content)
+          AND fetch_date IN (SELECT DISTINCT fetch_date FROM popular_content WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY fetch_date DESC LIMIT 14)
           AND path NOT LIKE '%/issues%'
           AND path NOT LIKE '%/pulls%'
           AND path NOT LIKE '%/pulse%'
           AND path NOT LIKE '%/graphs%'
           AND path NOT LIKE '%/milestone%'
           AND path != '/squid-protocol/gitgalaxy'
-        GROUP BY path
-        ORDER BY unique_visitors ASC
-        LIMIT 10;
+        GROUP BY date, path
+        ORDER BY date ASC;
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -233,25 +251,34 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     df['clean_path'] = df['path'].apply(lambda x: x.replace('/squid-protocol/gitgalaxy/tree/main/', '')
                                                   .replace('/squid-protocol/gitgalaxy/blob/main/', '')
                                                   .replace('/squid-protocol/gitgalaxy', '/ (Root)'))
+                                                  
+    df['date_dt'] = pd.to_datetime(df['date'])
+    pivot_df = df.pivot(index='date_dt', columns='clean_path', values='unique_visitors').fillna(0)
+    
+    # Filter to top 5 paths to keep the graph readable
+    top_paths = pivot_df.sum().nlargest(5).index
+    pivot_df = pivot_df[top_paths]
     
     fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.barh(df['clean_path'], df['unique_visitors'], color='#9467bd')
+    for path in pivot_df.columns:
+        ax.plot(pivot_df.index, pivot_df[path], linewidth=2, marker='o', label=path)
+        
+    ax.set_title("Feature Intent Patterns (14-Day Rolling Timeline)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date", fontsize=12, labelpad=10)
+    ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
     
-    ax.set_title("Feature Intent (Most Inspected Paths - 14 Days)", fontsize=16, pad=20, fontweight='bold')
+    import matplotlib.dates as mdates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.xticks(rotation=45)
+    
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.xaxis.set_visible(False)
-    
-    for bar in bars:
-        width = bar.get_width()
-        ax.text(width + 0.1, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
-                va='center', ha='left', fontsize=10, fontweight='bold')
-                
+    ax.grid(True, linestyle='--', alpha=0.3)
     plt.tight_layout()
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
-
+    
 if __name__ == "__main__":
     db = "traffic_metrics.db"
     generate_cumulative_graph(db, "cumulative_downloads.png")
