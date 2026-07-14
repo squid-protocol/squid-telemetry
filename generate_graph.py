@@ -8,9 +8,17 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     conn = sqlite3.connect(db_path)
     
     query = """
-        SELECT date, SUM(downloads) as daily_downloads 
-        FROM pypi_downloads 
-        WHERE repo_name = 'squid-protocol/gitgalaxy'
+        WITH combined_traffic AS (
+            SELECT date, downloads as volume 
+            FROM pypi_downloads 
+            WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT date, total_clones as volume 
+            FROM traffic_clones 
+            WHERE repo_name = 'squid-protocol/gitgalaxy'
+        )
+        SELECT date, SUM(volume) as daily_downloads 
+        FROM combined_traffic 
         GROUP BY date 
         ORDER BY date ASC;
     """
@@ -35,9 +43,9 @@ def generate_cumulative_graph(db_path: str, output_path: str):
         ax.plot(df['date'], df['cumulative_downloads'], color='#8A2BE2', linewidth=3)
         
         # Formatting the chart
-        ax.set_title("GitGalaxy Cumulative PyPI Downloads", fontsize=18, pad=20)
+        ax.set_title("GitGalaxy Cumulative Adoption (PyPI + GitHub)", fontsize=18, pad=20)
         ax.set_xlabel("Date", fontsize=14, labelpad=10)
-        ax.set_ylabel("Total Downloads", fontsize=14, labelpad=10)
+        ax.set_ylabel("Clones & Downloads", fontsize=14, labelpad=10)
         
         # Remove the top and right spines for a cleaner look
         ax.spines['top'].set_color('none')
