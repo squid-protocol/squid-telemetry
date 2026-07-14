@@ -47,40 +47,57 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     # Calculate cumulative sum for all repositories simultaneously
     cumulative_df = pivot_df.cumsum()
 
-    # 3. Render the XKCD-Style Graph
-    with plt.xkcd():
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        # Plot the negative controls first so they sit in the background
-        for repo in cumulative_df.columns:
-            if repo != 'squid-protocol/gitgalaxy':
-                # Strip the username from the label for a cleaner legend
-                clean_name = repo.split('/')[-1]
-                ax.plot(cumulative_df.index, cumulative_df[repo], color='gray', alpha=0.4, linewidth=1.5, label=clean_name)
-        
-        # Plot the primary target last so it renders on top
-        if 'squid-protocol/gitgalaxy' in cumulative_df.columns:
-            ax.plot(cumulative_df.index, cumulative_df['squid-protocol/gitgalaxy'], color='#8A2BE2', linewidth=3, label='gitgalaxy (Target)')
-        
-        # Formatting the chart
-        ax.set_title("GitGalaxy vs. Baseline Repositories (Cumulative)", fontsize=18, pad=20)
-        ax.set_xlabel("Date", fontsize=14, labelpad=10)
-        ax.set_ylabel("Total Unique Fetches", fontsize=14, labelpad=10)
-        
-        # Add a legend to explicitly map the controls
-        ax.legend(loc='upper left', fontsize=10)
-        
-        # Remove the top and right spines for a cleaner look
-        ax.spines['top'].set_color('none')
-        ax.spines['right'].set_color('none')
-        
-        plt.xticks(rotation=45)
-        ax.grid(True, linestyle='--', alpha=0.5)
-        plt.tight_layout()
-        
-        # 4. Save the artifact
-        plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
-        print(f"Graph successfully rendered to: {output_path}")
+    # 3. Render the Professional Graph
+    import matplotlib.dates as mdates
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot target first for top legend ordering, use zorder=10 to guarantee visual priority
+    if 'squid-protocol/gitgalaxy' in cumulative_df.columns:
+        ax.plot(cumulative_df.index, cumulative_df['squid-protocol/gitgalaxy'], 
+                color='red', linewidth=3, label='gitgalaxy', zorder=10)
+                
+    # Plot language-crucible in green
+    if 'squid-protocol/language-crucible' in cumulative_df.columns:
+        ax.plot(cumulative_df.index, cumulative_df['squid-protocol/language-crucible'], 
+                color='green', linewidth=2.5, label='language-crucible', zorder=9)
+    
+    # Plot the remaining negative controls in light gray as a grouped background layer
+    added_baseline = False
+    for repo in cumulative_df.columns:
+        if repo not in ['squid-protocol/gitgalaxy', 'squid-protocol/language-crucible']:
+            if not added_baseline:
+                ax.plot(cumulative_df.index, cumulative_df[repo], color='lightgray', 
+                        alpha=0.8, linewidth=1.5, label='Baseline Repo Examples', zorder=1)
+                added_baseline = True
+            else:
+                ax.plot(cumulative_df.index, cumulative_df[repo], color='lightgray', 
+                        alpha=0.8, linewidth=1.5, zorder=1)
+    
+    # Formatting the chart
+    ax.set_title("Cumulative Downloads of GitGalaxy (Without Mirrors)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date", fontsize=12, labelpad=10)
+    ax.set_ylabel("Total Unique Fetches (GitHub, PyPI, GitLab)", fontsize=12, labelpad=10)
+    
+    # Format X-axis dates to Year-Month (YYYY-MM)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.xticks(rotation=45)
+    
+    # Add a legend
+    ax.legend(loc='upper left', fontsize=10)
+    
+    # Clean up the bounding box
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#333333')
+    ax.spines['bottom'].set_color('#333333')
+    
+    ax.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    
+    # 4. Save the artifact
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
 
 if __name__ == "__main__":
     generate_cumulative_graph("traffic_metrics.db", "cumulative_downloads.png")
