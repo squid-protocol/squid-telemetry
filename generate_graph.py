@@ -9,22 +9,30 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     
     query = """
         WITH combined_traffic AS (
-            -- PyPI: Already filtered for 'without_mirrors' by scraper.py
-            SELECT repo_name, date, downloads as volume 
-            FROM pypi_downloads 
+            -- 1. Baseline Repositories (Aggregated Totals)
+            SELECT repo_name, date, downloads as volume FROM pypi_downloads WHERE repo_name != 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT repo_name, date, unique_cloners as volume FROM traffic_clones WHERE repo_name != 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT repo_name, date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (PARTITION BY repo_name ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name != 'squid-protocol/gitgalaxy'
             
             UNION ALL
             
-            -- GitHub: Using unique_cloners for a more stringent metric
-            SELECT repo_name, date, unique_cloners as volume 
-            FROM traffic_clones 
+            -- 2. GitGalaxy Total
+            SELECT 'gitgalaxy_total' as repo_name, date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT 'gitgalaxy_total' as repo_name, date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT 'gitgalaxy_total' as repo_name, date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
             
             UNION ALL
             
-            -- GitLab: Extracting daily positive deltas from the rolling 30-day window
-            SELECT repo_name, date, 
-                   MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (PARTITION BY repo_name ORDER BY date), 0)) as volume 
-            FROM gitlab_catalog_usage 
+            -- 3. GitGalaxy Components
+            SELECT 'gitgalaxy_pypi' as repo_name, date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT 'gitgalaxy_github' as repo_name, date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT 'gitgalaxy_gitlab' as repo_name, date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
         )
         SELECT repo_name, date, SUM(volume) as daily_downloads 
         FROM combined_traffic 
@@ -41,10 +49,12 @@ def generate_cumulative_graph(db_path: str, output_path: str):
 
     df['date'] = pd.to_datetime(df['date'])
     
-    # Pivot the data so each repository has its own column of daily totals
-    pivot_df = df.pivot(index='date', columns='repo_name', values='daily_downloads').fillna(0)
+    # Pivot the data without filling NaN with 0. 
+    # This ensures pandas .cumsum() naturally starts drawing each line 
+    # exactly at its respective first date of collected data.
+    pivot_df = df.pivot(index='date', columns='repo_name', values='daily_downloads')
     
-    # Calculate cumulative sum for all repositories simultaneously
+    # Calculate cumulative sum for all series
     cumulative_df = pivot_df.cumsum()
 
     # 3. Render the Professional Graph
@@ -52,20 +62,31 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Plot target first for top legend ordering, use zorder=10 to guarantee visual priority
-    if 'squid-protocol/gitgalaxy' in cumulative_df.columns:
-        ax.plot(cumulative_df.index, cumulative_df['squid-protocol/gitgalaxy'], 
-                color='red', linewidth=3, label='gitgalaxy', zorder=10)
+    # Plot target total first for top legend ordering
+    if 'gitgalaxy_total' in cumulative_df.columns:
+        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_total'], 
+                color='red', linewidth=3, label='GitGalaxy (Total)', zorder=10)
+                
+    # Plot GitGalaxy component lines 
+    if 'gitgalaxy_github' in cumulative_df.columns:
+        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_github'], 
+                color='#1f77b4', linewidth=2, linestyle='--', label='GitGalaxy (GitHub)', zorder=9)
+    if 'gitgalaxy_pypi' in cumulative_df.columns:
+        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_pypi'], 
+                color='#ff7f0e', linewidth=2, linestyle='--', label='GitGalaxy (PyPI)', zorder=9)
+    if 'gitgalaxy_gitlab' in cumulative_df.columns:
+        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_gitlab'], 
+                color='#9467bd', linewidth=2, linestyle='--', label='GitGalaxy (GitLab)', zorder=9)
                 
     # Plot language-crucible in green
     if 'squid-protocol/language-crucible' in cumulative_df.columns:
         ax.plot(cumulative_df.index, cumulative_df['squid-protocol/language-crucible'], 
-                color='green', linewidth=2.5, label='language-crucible', zorder=9)
+                color='green', linewidth=2.5, label='language-crucible', zorder=8)
     
     # Plot the remaining negative controls in light gray as a grouped background layer
     added_baseline = False
     for repo in cumulative_df.columns:
-        if repo not in ['squid-protocol/gitgalaxy', 'squid-protocol/language-crucible']:
+        if repo not in ['gitgalaxy_total', 'gitgalaxy_github', 'gitgalaxy_pypi', 'gitgalaxy_gitlab', 'squid-protocol/language-crucible']:
             if not added_baseline:
                 ax.plot(cumulative_df.index, cumulative_df[repo], color='lightgray', 
                         alpha=0.8, linewidth=1.5, label='Baseline Repo Examples', zorder=1)
