@@ -12,11 +12,29 @@ This repository serves as the centralized, automated data warehouse and visualiz
 
 Instead, this repository passively aggregates our public distribution metrics—tracking how often the engine is fetched across GitHub, GitLab, and PyPI.
 
-## Cumulative Adoption
+## 📈 Core Telemetry & Metrics
 
+### Cumulative Adoption
+Tracking the total, deduplicated volume of fetches across PyPI, GitHub, and GitLab against our baseline control repositories.
 ![GitGalaxy Cumulative Downloads](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/cumulative_downloads.png)
 
-> *Graph automatically generated and updated daily via GitHub Actions.*
+### The Conversion Funnel (14-Day Rolling)
+Measuring the transition from passive human intent (unique repository profile views) to active pipeline execution (unique automated fetches).
+![Conversion Funnel](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/conversion_funnel.png)
+
+### Discovery Channels (14-Day Rolling)
+Identifying the top referring external domains driving initial human discovery of the GitGalaxy architecture.
+![Discovery Channels](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/discovery_channels.png)
+
+### Feature Intent Heatmap (14-Day Rolling)
+Mapping the most frequently inspected sub-directories and tools to understand what features users are auditing before pulling the engine.
+![Feature Intent](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/feature_intent.png)
+
+### Release Cadence vs. Downloads
+Correlating daily download spikes directly against version releases to monitor CI/CD Dependabot automated updates and community launch responses.
+![Release Correlation](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/release_correlation.png)
+
+> *Graphs are generated automatically via Python/Matplotlib and synchronized daily via GitHub Actions.*
 
 ---
 
@@ -26,5 +44,5 @@ This repository is completely self-contained and runs on an automated daily CRON
 
 1. **The Scraper (`scraper.py`):** At UTC Midnight, the pipeline reaches out to the GitHub REST API, GitLab GraphQL API, and PyPI Stats API to pull the sliding 14-day window of clones, views, and downloads.
 2. **The Database (`traffic_metrics.db`):** The raw JSON responses are normalized and safely upserted into a highly relational SQLite database.
-3. **The Visualizer (`generate_graph.py`):** A Pandas and Matplotlib script queries the SQLite database to calculate the cumulative totals, rendering the time-series data into the `matplotlib.xkcd()` stylized PNG displayed above.
-4. **The Commit (`scrape_and_graph.yml`):** The CI/CD runner automatically commits the updated database and new image artifact back to this repository, ensuring the dashboard remains perfectly synchronized without manual intervention.
+3. **The Visualizers (`generate_graph.py` & `release_correlation.py`):** Pandas and Matplotlib scripts query the SQLite database to calculate rolling windows and cumulative totals, rendering the time-series data into clean, professional PNG artifacts.
+4. **The Commit (`telemetry_pipeline.yml`):** The CI/CD runner automatically commits the updated database and new image artifacts back to this repository, ensuring the dashboard remains perfectly synchronized without manual intervention.
