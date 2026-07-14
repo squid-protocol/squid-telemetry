@@ -120,5 +120,141 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
+def generate_conversion_funnel(db_path: str, output_path: str):
+    conn = sqlite3.connect(db_path)
+    query = """
+        WITH views AS (
+            SELECT date, unique_visitors as views
+            FROM traffic_views
+            WHERE repo_name = 'squid-protocol/gitgalaxy'
+        ),
+        downloads AS (
+            SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
+        ),
+        agg_downloads AS (
+            SELECT date, SUM(volume) as total_downloads
+            FROM downloads
+            GROUP BY date
+        )
+        SELECT v.date, v.views, COALESCE(d.total_downloads, 0) as downloads
+        FROM views v
+        LEFT JOIN agg_downloads d ON v.date = d.date
+        ORDER BY v.date DESC LIMIT 14;
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    if df.empty: return
+    
+    df = df.sort_values('date') 
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.fill_between(df['date'], df['views'], color='#ADD8E6', alpha=0.5, label='Unique Profile Views (Intent)')
+    ax.plot(df['date'], df['downloads'], color='#00008B', linewidth=3, marker='o', label='Unique Fetches (Execution)')
+    
+    ax.set_title("GitGalaxy Conversion Funnel (14-Day Rolling)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date", fontsize=12, labelpad=10)
+    ax.set_ylabel("Count", fontsize=12, labelpad=10)
+    
+    import matplotlib.dates as mdates
+    ax.xaxis.set_major_locator(mdates.DayLocator())
+    plt.xticks(rotation=45)
+    
+    ax.legend(loc='upper left')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
+def generate_discovery_engine(db_path: str, output_path: str):
+    conn = sqlite3.connect(db_path)
+    query = """
+        SELECT site, SUM(unique_visitors) as unique_visitors 
+        FROM referring_sites 
+        WHERE repo_name = 'squid-protocol/gitgalaxy' 
+          AND fetch_date = (SELECT MAX(fetch_date) FROM referring_sites)
+        GROUP BY site
+        ORDER BY unique_visitors ASC
+        LIMIT 10;
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    if df.empty: return
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.barh(df['site'], df['unique_visitors'], color='#2ca02c')
+    
+    ax.set_title("Top Discovery Channels (Active 14-Day Window)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Unique Visitors", fontsize=12)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.xaxis.set_visible(False) 
+    
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(width + 0.2, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
+                va='center', ha='left', fontsize=10, fontweight='bold')
+                
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
+def generate_feature_heatmap(db_path: str, output_path: str):
+    conn = sqlite3.connect(db_path)
+    query = """
+        SELECT path, SUM(unique_visitors) as unique_visitors 
+        FROM popular_content 
+        WHERE repo_name = 'squid-protocol/gitgalaxy' 
+          AND fetch_date = (SELECT MAX(fetch_date) FROM popular_content)
+          AND path NOT LIKE '%/issues%'
+          AND path NOT LIKE '%/pulls%'
+          AND path NOT LIKE '%/pulse%'
+          AND path NOT LIKE '%/graphs%'
+          AND path NOT LIKE '%/milestone%'
+          AND path != '/squid-protocol/gitgalaxy'
+        GROUP BY path
+        ORDER BY unique_visitors ASC
+        LIMIT 10;
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    if df.empty: return
+    
+    # Strip the verbose GitHub domains to make the chart labels clean
+    df['clean_path'] = df['path'].apply(lambda x: x.replace('/squid-protocol/gitgalaxy/tree/main/', '')
+                                                  .replace('/squid-protocol/gitgalaxy/blob/main/', '')
+                                                  .replace('/squid-protocol/gitgalaxy', '/ (Root)'))
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.barh(df['clean_path'], df['unique_visitors'], color='#9467bd')
+    
+    ax.set_title("Feature Intent (Most Inspected Paths - 14 Days)", fontsize=16, pad=20, fontweight='bold')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.xaxis.set_visible(False)
+    
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(width + 0.1, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
+                va='center', ha='left', fontsize=10, fontweight='bold')
+                
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
 if __name__ == "__main__":
-    generate_cumulative_graph("traffic_metrics.db", "cumulative_downloads.png")
+    db = "traffic_metrics.db"
+    generate_cumulative_graph(db, "cumulative_downloads.png")
+    generate_conversion_funnel(db, "conversion_funnel.png")
+    generate_discovery_engine(db, "discovery_channels.png")
+    generate_feature_heatmap(db, "feature_intent.png")

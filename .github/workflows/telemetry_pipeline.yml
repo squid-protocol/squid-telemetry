@@ -38,7 +38,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add --force traffic_metrics.db cumulative_downloads.png
+          git add --force traffic_metrics.db *.png
           
-          # Only commit and push if the database or image actually changed
-          git diff --quiet && git diff --staged --quiet || (git commit -m "data: update telemetry DB and rendering" && git push origin main)
+          # Only commit and push if the database or images actually changed
+          git diff --quiet && git diff --staged --quiet || (git commit -m "data: update telemetry DB and renderings" && git push origin main)
