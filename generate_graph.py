@@ -340,26 +340,33 @@ def generate_marketing_roi_graph(db_path: str, output_path: str):
     
     # --- COMPREHENSIVE REDDIT EVENTS MAPPING ---
     reddit_events = {
-        # 2 Months Ago Cluster
+        # 3 Months Ago Cluster (Mid-April 2026 - The Initial GitGalaxy Launch)
+        '2026-04-10': 'r/vibecoding & r/threejs',
+        '2026-04-12': 'r/softwarearchitecture',
+        '2026-04-15': 'r/Python (blAST Engine Showcase)',
+        '2026-04-18': 'r/github (Dashboard Launch)',
+        
+        # 2 Months Ago Cluster (Mid-May 2026)
         '2026-05-10': 'r/coolgithubprojects (Launch)',
         '2026-05-12': 'r/AskProgrammers & r/startupaccelerator',
         '2026-05-14': 'r/vibecoding',
         '2026-05-16': 'r/SideProject & r/SpringBoot',
         
-        # 1 Month Ago Cluster
+        # 1 Month Ago Cluster (Mid-June 2026)
         '2026-06-10': 'r/Python (PyPI Stats)',
         '2026-06-12': 'r/devsecops & r/opensource',
         '2026-06-14': 'r/github & r/developers',
         '2026-06-16': 'r/SideProject & r/softwarearchitecture',
         '2026-06-18': 'r/vibecoding & r/learnprogramming',
         
-        # Recent Exact Days Cluster
-        '2026-06-29': 'r/Python & r/devops (15 days ago)',
-        '2026-06-30': 'r/blueteamsec & r/softwarearch (14 days ago)',
-        '2026-07-01': 'r/cybersec, r/devsecops, r/zerotrust (13 days ago)',
-        '2026-07-05': 'r/Python & r/AskProgramming (9 days ago)',
-        '2026-07-06': 'r/devops (8 days ago)',
-        '2026-07-08': 'r/softwarearchitecture (6 days ago)'
+        # Recent Exact Days Cluster (Late June/Early July 2026)
+        '2026-06-29': 'r/Python & r/devops',
+        '2026-06-30': 'r/blueteamsec & r/softwarearch',
+        '2026-07-01': 'r/cybersec, r/devsecops, r/zerotrust',
+        '2026-07-05': 'r/Python & r/AskProgramming',
+        '2026-07-06': 'r/devops',
+        '2026-07-08': 'r/softwarearchitecture',
+        '2026-07-10': 'r/ciso'
     }
     
     cumulative_df.index = pd.to_datetime(cumulative_df.index)
