@@ -2,6 +2,7 @@
 import sqlite3
 import pandas as pd
 import matplotlib.pyplot as plt
+import requests
 
 def generate_cumulative_graph(db_path: str, output_path: str):
     # 1. Connect to the database and extract the daily totals
@@ -279,9 +280,107 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
     
+def generate_release_correlation(db_path: str, output_path: str):
+    # 1. Fetch dynamic release history directly from PyPI
+    resp = requests.get("[https://pypi.org/pypi/gitgalaxy/json](https://pypi.org/pypi/gitgalaxy/json)")
+    daily_versions = {}
+    
+    if resp.status_code == 200:
+        data = resp.json()
+        releases_raw = data.get("releases", {})
+        
+        for version, uploads in releases_raw.items():
+            if not uploads:
+                continue
+            # Extract the YYYY-MM-DD from the upload_time
+            upload_date = uploads[0]['upload_time'].split('T')[0]
+            if upload_date not in daily_versions:
+                daily_versions[upload_date] = []
+            daily_versions[upload_date].append(version)
+            
+    # 2. Condense multiple patches on the same day to the highest version
+    releases = {}
+    def version_tuple(v):
+        return [int(x) if x.isdigit() else x for x in v.split('.')]
+        
+    for date_str, v_list in daily_versions.items():
+        v_list.sort(key=version_tuple)
+        releases[date_str] = f"v{v_list[-1]}"
+
+    # 3. Query the aggregated daily fetches across all sources
+    conn = sqlite3.connect(db_path)
+    query = """
+        WITH combined_traffic AS (
+            SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            UNION ALL
+            SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
+        )
+        SELECT date, SUM(volume) as daily_downloads 
+        FROM combined_traffic 
+        GROUP BY date 
+        ORDER BY date ASC;
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    if df.empty: return
+
+    # 4. Process data and calculate cumulative sum
+    df['date_dt'] = pd.to_datetime(df['date'])
+    df['cumulative_downloads'] = df['daily_downloads'].cumsum()
+    
+    # 5. Render the graph
+    import matplotlib.dates as mdates
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    ax.plot(df['date_dt'], df['cumulative_downloads'], color='#4682B4', linewidth=3, label='Cumulative Unique Fetches')
+
+    # Sort dates to calculate the 75% threshold for label placement
+    sorted_dates = sorted(releases.keys())
+    if sorted_dates:
+        threshold_idx = int(len(sorted_dates) * 0.75)
+        
+        for i, date_str in enumerate(sorted_dates):
+            version = releases[date_str]
+            dt = pd.to_datetime(date_str)
+            
+            if not df.empty and dt >= df['date_dt'].min() and dt <= df['date_dt'].max():
+                ax.axvline(x=dt, color='#ff7f0e', linestyle='--', linewidth=1.5, alpha=0.8)
+                
+                # If in the last 25% of releases, anchor text to the bottom to avoid the soaring line
+                if i >= threshold_idx:
+                    y_pos = ax.get_ylim()[1] * 0.05
+                    va_align = 'bottom'
+                else:
+                    y_pos = ax.get_ylim()[1] * 0.95
+                    va_align = 'top'
+                    
+                ax.text(dt, y_pos, version, rotation=90, color='#d62728', 
+                        fontweight='bold', fontsize=9, va=va_align, ha='right',
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
+
+    ax.set_title("GitGalaxy Cumulative Downloads vs. Release Cadence", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date", fontsize=12, labelpad=10)
+    ax.set_ylabel("Total Cumulative Fetches", fontsize=12, labelpad=10)
+    
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.xticks(rotation=45)
+    
+    ax.legend(loc='upper left')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, linestyle=':', alpha=0.4)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
 if __name__ == "__main__":
     db = "traffic_metrics.db"
     generate_cumulative_graph(db, "cumulative_downloads.png")
     generate_conversion_funnel(db, "conversion_funnel.png")
     generate_discovery_engine(db, "discovery_channels.png")
     generate_feature_heatmap(db, "feature_intent.png")
+    generate_release_correlation(db, "release_correlation.png")
