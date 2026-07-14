@@ -1,0 +1,231 @@
+### TRAFFIC VIEWS
+|                 repo_name                  |    date    | total_views | unique_visitors |
+|--------------------------------------------|------------|-------------|-----------------|
+| squid-protocol/cobol_to_java_examples      | 2026-06-24 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-06-25 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-06-26 | 2           | 1               |
+| squid-protocol/cobol_to_java_examples      | 2026-06-27 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-06-28 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-06-29 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-06-30 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-01 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-02 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-03 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-04 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-05 | 0           | 0               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-06 | 2           | 1               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-07 | 0           | 0               |
+| squid-protocol/gitgalaxy                   | 2026-06-24 | 19          | 2               |
+| squid-protocol/gitgalaxy                   | 2026-06-25 | 102         | 4               |
+| squid-protocol/gitgalaxy                   | 2026-06-26 | 39          | 5               |
+| squid-protocol/gitgalaxy                   | 2026-06-27 | 48          | 2               |
+| squid-protocol/gitgalaxy                   | 2026-06-28 | 14          | 1               |
+| squid-protocol/gitgalaxy                   | 2026-06-29 | 20          | 6               |
+| squid-protocol/gitgalaxy                   | 2026-06-30 | 20          | 7               |
+| squid-protocol/gitgalaxy                   | 2026-07-01 | 70          | 12              |
+| squid-protocol/gitgalaxy                   | 2026-07-02 | 24          | 6               |
+| squid-protocol/gitgalaxy                   | 2026-07-03 | 44          | 9               |
+| squid-protocol/gitgalaxy                   | 2026-07-04 | 101         | 5               |
+| squid-protocol/gitgalaxy                   | 2026-07-05 | 225         | 37              |
+| squid-protocol/gitgalaxy                   | 2026-07-06 | 167         | 10              |
+| squid-protocol/gitgalaxy                   | 2026-07-07 | 85          | 3               |
+| squid-protocol/language-crucible           | 2026-06-24 | 0           | 0               |
+| squid-protocol/language-crucible           | 2026-06-25 | 0           | 0               |
+| squid-protocol/language-crucible           | 2026-06-26 | 0           | 0               |
+| squid-protocol/language-crucible           | 2026-06-27 | 0           | 0               |
+| squid-protocol/language-crucible           | 2026-06-28 | 15          | 1               |
+| squid-protocol/language-crucible           | 2026-06-29 | 0           | 0               |
+| squid-protocol/language-crucible           | 2026-06-30 | 1           | 1               |
+| squid-protocol/language-crucible           | 2026-07-01 | 0           | 0               |
+| squid-protocol/language-crucible           | 2026-07-02 | 6           | 1               |
+| squid-protocol/language-crucible           | 2026-07-03 | 2           | 1               |
+| squid-protocol/language-crucible           | 2026-07-04 | 26          | 1               |
+| squid-protocol/language-crucible           | 2026-07-05 | 14          | 1               |
+| squid-protocol/language-crucible           | 2026-07-06 | 3           | 1               |
+| squid-protocol/language-crucible           | 2026-07-07 | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-06-24 | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-06-25 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-06-26 | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-06-27 | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-06-28 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-06-29 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-06-30 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-07-01 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-07-02 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-07-03 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-07-04 | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-07-05 | 0           | 0               |
+| squid-protocol/meow-turtle                 | 2026-07-06 | 5           | 2               |
+| squid-protocol/meow-turtle                 | 2026-07-07 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-24 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-25 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-26 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-27 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-28 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-29 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-30 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-01 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-02 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-03 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-04 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-05 | 0           | 0               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-06 | 7           | 1               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-07 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-06-24 | 4           | 1               |
+| squid-protocol/teaching-portfolio          | 2026-06-25 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-06-26 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-06-27 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-06-28 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-06-29 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-06-30 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-07-01 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-07-02 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-07-03 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-07-04 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-07-05 | 0           | 0               |
+| squid-protocol/teaching-portfolio          | 2026-07-06 | 3           | 1               |
+| squid-protocol/teaching-portfolio          | 2026-07-07 | 0           | 0               |
+
+### TRAFFIC CLONES
+|                 repo_name                  |    date    | total_clones | unique_cloners |
+|--------------------------------------------|------------|--------------|----------------|
+| squid-protocol/cobol_to_java_examples      | 2026-06-24 | 2            | 2              |
+| squid-protocol/cobol_to_java_examples      | 2026-06-25 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-06-26 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-06-27 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-06-28 | 1            | 1              |
+| squid-protocol/cobol_to_java_examples      | 2026-06-29 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-06-30 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-01 | 2            | 2              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-02 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-03 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-04 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-05 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-06 | 0            | 0              |
+| squid-protocol/cobol_to_java_examples      | 2026-07-07 | 0            | 0              |
+| squid-protocol/gitgalaxy                   | 2026-06-24 | 18           | 9              |
+| squid-protocol/gitgalaxy                   | 2026-06-25 | 56           | 16             |
+| squid-protocol/gitgalaxy                   | 2026-06-26 | 138          | 16             |
+| squid-protocol/gitgalaxy                   | 2026-06-27 | 279          | 52             |
+| squid-protocol/gitgalaxy                   | 2026-06-28 | 22           | 7              |
+| squid-protocol/gitgalaxy                   | 2026-06-29 | 6            | 3              |
+| squid-protocol/gitgalaxy                   | 2026-06-30 | 1            | 1              |
+| squid-protocol/gitgalaxy                   | 2026-07-01 | 1            | 1              |
+| squid-protocol/gitgalaxy                   | 2026-07-02 | 10           | 3              |
+| squid-protocol/gitgalaxy                   | 2026-07-03 | 165          | 14             |
+| squid-protocol/gitgalaxy                   | 2026-07-04 | 293          | 42             |
+| squid-protocol/gitgalaxy                   | 2026-07-05 | 267          | 31             |
+| squid-protocol/gitgalaxy                   | 2026-07-06 | 216          | 37             |
+| squid-protocol/gitgalaxy                   | 2026-07-07 | 290          | 24             |
+| squid-protocol/language-crucible           | 2026-06-24 | 0            | 0              |
+| squid-protocol/language-crucible           | 2026-06-25 | 0            | 0              |
+| squid-protocol/language-crucible           | 2026-06-26 | 0            | 0              |
+| squid-protocol/language-crucible           | 2026-06-27 | 0            | 0              |
+| squid-protocol/language-crucible           | 2026-06-28 | 39           | 28             |
+| squid-protocol/language-crucible           | 2026-06-29 | 7            | 5              |
+| squid-protocol/language-crucible           | 2026-06-30 | 1            | 1              |
+| squid-protocol/language-crucible           | 2026-07-01 | 3            | 3              |
+| squid-protocol/language-crucible           | 2026-07-02 | 3            | 3              |
+| squid-protocol/language-crucible           | 2026-07-03 | 15           | 9              |
+| squid-protocol/language-crucible           | 2026-07-04 | 9            | 6              |
+| squid-protocol/language-crucible           | 2026-07-05 | 23           | 18             |
+| squid-protocol/language-crucible           | 2026-07-06 | 10           | 8              |
+| squid-protocol/language-crucible           | 2026-07-07 | 12           | 11             |
+| squid-protocol/meow-turtle                 | 2026-06-24 | 3            | 3              |
+| squid-protocol/meow-turtle                 | 2026-06-25 | 2            | 1              |
+| squid-protocol/meow-turtle                 | 2026-06-26 | 3            | 1              |
+| squid-protocol/meow-turtle                 | 2026-06-27 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-06-28 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-06-29 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-06-30 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-07-01 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-07-02 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-07-03 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-07-04 | 2            | 2              |
+| squid-protocol/meow-turtle                 | 2026-07-05 | 1            | 1              |
+| squid-protocol/meow-turtle                 | 2026-07-06 | 0            | 0              |
+| squid-protocol/meow-turtle                 | 2026-07-07 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-24 | 2            | 2              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-25 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-26 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-27 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-28 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-29 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-06-30 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-01 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-02 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-03 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-04 | 1            | 1              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-05 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-06 | 0            | 0              |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-07 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-06-24 | 13           | 7              |
+| squid-protocol/teaching-portfolio          | 2026-06-25 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-06-26 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-06-27 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-06-28 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-06-29 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-06-30 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-07-01 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-07-02 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-07-03 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-07-04 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-07-05 | 1            | 1              |
+| squid-protocol/teaching-portfolio          | 2026-07-06 | 0            | 0              |
+| squid-protocol/teaching-portfolio          | 2026-07-07 | 0            | 0              |
+
+### REFERRING SITES
+|                 repo_name                  | fetch_date |           site           | total_views | unique_visitors |
+|--------------------------------------------|------------|--------------------------|-------------|-----------------|
+| squid-protocol/gitgalaxy                   | 2026-07-09 | github.com               | 69          | 8               |
+| squid-protocol/language-crucible           | 2026-07-09 | github.com               | 47          | 2               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | reddit.com               | 32          | 14              |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | squid-protocol.github.io | 19          | 2               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | Bing                     | 8           | 7               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | com.reddit.frontpage     | 8           | 7               |
+| squid-protocol/teaching-portfolio          | 2026-07-09 | github.com               | 4           | 1               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | github-help-wanted.com   | 3           | 1               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | Google                   | 2           | 1               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-09 | github.com               | 2           | 1               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-09 | reddit.com               | 2           | 1               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-09 | github.com               | 2           | 1               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | gitgalaxy.io             | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-07-09 | github.com               | 1           | 1               |
+| squid-protocol/meow-turtle                 | 2026-07-09 | reddit.com               | 1           | 1               |
+
+### POPULAR CONTENT
+|                 repo_name                  | fetch_date |                             path                             | total_views | unique_visitors |
+|--------------------------------------------|------------|--------------------------------------------------------------|-------------|-----------------|
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy                                    | 261         | 39              |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/issues                             | 91          | 8               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/pulls                              | 81          | 4               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/tree/main/gitgalaxy                | 28          | 4               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/milestones                         | 23          | 1               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/graphs/traffic                     | 16          | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible                            | 16          | 2               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/tree/main/gitgalaxy/tools/cobol_to | 14          | 9               |
+|                                            |            | _cobol                                                       |             |                 |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/milestone/1                        | 13          | 1               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/tree/main/gitgalaxy/tools          | 12          | 2               |
+| squid-protocol/gitgalaxy                   | 2026-07-09 | /squid-protocol/gitgalaxy/pulse                              | 11          | 1               |
+| squid-protocol/meow-turtle                 | 2026-07-09 | /squid-protocol/meow-turtle                                  | 5           | 4               |
+| squid-protocol/teaching-portfolio          | 2026-07-09 | /squid-protocol/teaching-portfolio                           | 4           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/graphs/traffic             | 3           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/network/dependencies       | 3           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/network/updates            | 3           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/tree/main/csharp/roslyn    | 3           | 1               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-09 | /squid-protocol/cobol_to_java_examples                       | 3           | 2               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-09 | /squid-protocol/sorting_evolution_algorithm                  | 3           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/new/main                   | 2           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/pull/1                     | 2           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/pulse                      | 2           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/security                   | 2           | 1               |
+| squid-protocol/language-crucible           | 2026-07-09 | /squid-protocol/language-crucible/tree/main/agc_assembly/apo | 2           | 1               |
+|                                            |            | llo-11                                                       |             |                 |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-09 | /squid-protocol/sorting_evolution_algorithm/graphs/traffic   | 2           | 1               |
+| squid-protocol/sorting_evolution_algorithm | 2026-07-09 | /squid-protocol/sorting_evolution_algorithm/pulse            | 2           | 1               |
+| squid-protocol/cobol_to_java_examples      | 2026-07-09 | /squid-protocol/cobol_to_java_examples/tree/main/CICS-Cobol_ | 1           | 1               |
+|                                            |            | java_spring_scaffold/src/main                                |             |                 |
+| squid-protocol/teaching-portfolio          | 2026-07-09 | /squid-protocol/teaching-portfolio/blob/main/readme.md       | 1           | 1               |
+| squid-protocol/teaching-portfolio          | 2026-07-09 | /squid-protocol/teaching-portfolio/graphs/traffic            | 1           | 1               |
+| squid-protocol/teaching-portfolio          | 2026-07-09 | /squid-protocol/teaching-portfolio/pulse                     | 1           | 1               |
