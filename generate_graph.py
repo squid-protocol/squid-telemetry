@@ -282,7 +282,7 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     
 def generate_release_correlation(db_path: str, output_path: str):
     # 1. Fetch dynamic release history directly from PyPI
-    resp = requests.get("[https://pypi.org/pypi/gitgalaxy/json](https://pypi.org/pypi/gitgalaxy/json)")
+    resp = requests.get("https://pypi.org/pypi/gitgalaxy/json")
     daily_versions = {}
     
     if resp.status_code == 200:
