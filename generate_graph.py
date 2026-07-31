@@ -451,8 +451,9 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
 
     # Font sizes bumped substantially across the board (title/axis/tick/legend)
     # per explicit request -- small multi-panel text was hard to read at the
-    # size this normally renders at in a README.
-    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 18, 15, 13, 14, 22
+    # size this normally renders at in a README. Bold applied to axis/tick/
+    # legend text too (titles were already bold).
+    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 20, 17, 14, 15, 24
 
     def _plot_series(ax, df, y_col, **kwargs):
         """
@@ -473,14 +474,13 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         """
         If a series' own history starts after `anchor_date`, prepend a
         synthetic (anchor_date, 0-for-every-non-date-column) row so a lone,
-        context-free point (e.g. "1 repo using the Action, as of today") can
-        render as an actual line instead of a dot with no story. This is a
-        MODELING ASSUMPTION -- the metric was presumably 0 before gitgalaxy
-        existed / before we started tracking it, not something we actually
-        measured back then -- documented here and in the README caption, not
-        hidden. Only applied to the two Production/CI series: stars/forks and
-        traffic already have their own real starting points (see the "not
-        yet tracked" gray segment below for traffic's gap instead).
+        context-free point can render as an actual line instead of a dot with
+        no story. This is a MODELING ASSUMPTION -- the metric was presumably
+        0 before gitgalaxy existed / before we started tracking it, not
+        something we actually measured back then -- documented here and in
+        the README caption, not hidden. Used for GitLab Catalog usage, which
+        has no known "this is when it changed" date the way Action adoption
+        does (see the step-anchor just below) -- it's just been 0 throughout.
         """
         if df.empty or df['date'].min() <= anchor_date:
             return df
@@ -488,7 +488,27 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         return pd.concat([pd.DataFrame([anchor_row]), df], ignore_index=True)
 
     ci_gitlab = _anchor_zero_at(ci_gitlab, date_min)
-    ci_action = _anchor_zero_at(ci_action, date_min)
+
+    # GitHub Action adoption didn't grow gradually -- it jumped from 0 to its
+    # current value on a SPECIFIC KNOWN date: gitgalaxy's own workflows
+    # started referencing `uses: squid-protocol/gitgalaxy` on 2026-06-30 (per
+    # the maintainer directly -- there's no API exposing "since when has this
+    # workflow file contained this line", so this fact can't be derived, only
+    # supplied). A straight line from date_min to today would misrepresent
+    # this as smooth, gradual growth instead of the real step it was; drawn
+    # with drawstyle='steps-post' below so it renders as an actual jump.
+    GITGALAXY_ACTION_ADOPTION_DATE = pd.Timestamp('2026-06-30')
+    if not ci_action.empty and ci_action['date'].min() > GITGALAXY_ACTION_ADOPTION_DATE > date_min:
+        first_value = ci_action.iloc[0]['unique_repos']
+        ci_action = pd.concat([
+            pd.DataFrame([
+                {'date': date_min, 'unique_repos': 0},
+                {'date': GITGALAXY_ACTION_ADOPTION_DATE, 'unique_repos': first_value},
+            ]),
+            ci_action,
+        ], ignore_index=True)
+    else:
+        ci_action = _anchor_zero_at(ci_action, date_min)
 
     # Matplotlib's built-in seaborn-derived stylesheet -- gives the clean
     # seaborn look without adding an actual seaborn dependency to the
@@ -532,10 +552,16 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         ax_traffic.set_title("Repository Traffic", fontsize=TITLE_FS, fontweight='bold')
 
         # --- Panel 3: Production / CI Integration ---
+        # Simplified single-line legend labels (methodology detail -- "unique
+        # projects, 30d", "unique repos via code search" -- lives in the
+        # README caption instead of cluttering the in-chart legend).
+        # drawstyle='steps-post': both series are discrete counts that only
+        # change when checked, not continuous quantities -- a step is the
+        # honest rendering, not an interpolated slope between check-ins.
         _plot_series(ax_ci, ci_gitlab, 'usage_count_30_days', color='#9467bd', linewidth=2.5,
-                     label='GitLab CI/CD Catalog\n(unique projects, 30d)')
+                     drawstyle='steps-post', label='GitLab CI/CD Catalog')
         _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=2.5,
-                     label='GitHub Action\n(unique repos, code search)')
+                     drawstyle='steps-post', label='GitHub Action')
         ax_ci.set_title("Production / CI Integration", fontsize=TITLE_FS, fontweight='bold')
 
         # No emoji anywhere in this figure: matplotlib's default DejaVu Sans
@@ -544,8 +570,8 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # Emoji are fine in the README's own markdown heading around the
         # embedded image, just not baked into the raster PNG itself.
         for ax in (ax_stars, ax_traffic, ax_ci):
-            ax.set_xlabel("Date", fontsize=AXIS_FS)
-            ax.set_ylabel("Count", fontsize=AXIS_FS)
+            ax.set_xlabel("Date", fontsize=AXIS_FS, fontweight='bold')
+            ax.set_ylabel("Count", fontsize=AXIS_FS, fontweight='bold')
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%y'))
             # Cap both axes at ~4 ticks -- more legible at the bumped font
             # sizes, and less cluttered than a tick per week/every-few-units.
@@ -553,12 +579,14 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
             ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
             ax.tick_params(axis='both', labelsize=TICK_FS)
             ax.tick_params(axis='x', rotation=45)
+            for label in ax.get_xticklabels() + ax.get_yticklabels():
+                label.set_fontweight('bold')
             ax.grid(False)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             ax.set_ylim(bottom=0)
             ax.set_xlim(date_min, date_max)
-            ax.legend(loc='upper left', fontsize=LEGEND_FS, framealpha=0.9)
+            ax.legend(loc='upper left', framealpha=0.9, prop={'size': LEGEND_FS, 'weight': 'bold'})
 
         fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=SUPTITLE_FS,
                      fontweight='bold', y=1.03)
