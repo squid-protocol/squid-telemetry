@@ -193,14 +193,16 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     # deduplicated count -- see generate_cumulative_graph()'s own note.
     ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, label='Unique Profile Views (Intent)')
     ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, label='Combined Fetch Volume (Execution)')
-    
+
     # Calculate offset for labels based on the max value in the graph
     y_offset = df[['views', 'downloads']].max().max() * 0.02
-    
-    # Add numerical data labels directly above each point
-    for x, y in zip(df['date_dt'], df['views']):
-        ax.text(x, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9, color='#4682B4', fontweight='bold')
-    for x, y in zip(df['date_dt'], df['downloads']):
+
+    # Numeric labels only on every 10th point of the downloads line -- with
+    # all-time data now spanning 30+ points (see the all-time fix above),
+    # labeling every single point on both lines was illegible clutter.
+    # Views labels dropped entirely: that line hugs 0 on this scale, so its
+    # labels were the densest and least readable of the two anyway.
+    for x, y in list(zip(df['date_dt'], df['downloads']))[::10]:
         ax.text(x, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9, color='#00008B', fontweight='bold')
     
     ax.set_title("GitGalaxy Conversion Funnel (All-Time)", fontsize=16, pad=20, fontweight='bold')
@@ -644,8 +646,8 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # timestamp -- see scraper.py's _cumulative_by_date, a valid use of
         # cumulative math since each star/fork is a single non-repeatable
         # action, unlike cloners/views below).
-        _plot_series(ax_stars, human_stars, 'stars', color='#f1c40f', linewidth=2.5, label='GitHub Stars')
-        _plot_series(ax_stars, human_stars, 'forks', color='#e67e22', linewidth=2.5, label='GitHub Forks')
+        _plot_series(ax_stars, human_stars, 'stars', color='#f1c40f', linewidth=4, label='GitHub Stars')
+        _plot_series(ax_stars, human_stars, 'forks', color='#e67e22', linewidth=4, label='GitHub Forks')
         ax_stars.set_title("Stars & Forks", fontsize=TITLE_FS, fontweight='bold')
 
         # --- Panel 2: Repository Traffic ---
@@ -679,9 +681,9 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # drawstyle='steps-post': both series are discrete counts that only
         # change when checked, not continuous quantities -- a step is the
         # honest rendering, not an interpolated slope between check-ins.
-        _plot_series(ax_ci, ci_gitlab, 'usage_count_30_days', color='#9467bd', linewidth=2.5,
+        _plot_series(ax_ci, ci_gitlab, 'usage_count_30_days', color='#9467bd', linewidth=4,
                      drawstyle='steps-post', label='GitLab')
-        _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=2.5,
+        _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=4,
                      drawstyle='steps-post', label='GitHub Action')
         ax_ci.set_title("Production / CI Integration", fontsize=TITLE_FS, fontweight='bold')
 
