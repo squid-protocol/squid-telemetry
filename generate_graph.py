@@ -97,9 +97,15 @@ def generate_cumulative_graph(db_path: str, output_path: str):
                         alpha=0.8, linewidth=1.5, zorder=1)
     
     # Formatting the chart
-    ax.set_title("Cumulative Downloads of GitGalaxy (Without Mirrors)", fontsize=16, pad=20, fontweight='bold')
+    # NOTE: deliberately not labeled "Unique Fetches" -- PyPI's without_mirrors
+    # count is raw download EVENTS (no dedup possible, PyPI's public dataset has
+    # no identity to dedup against), while GitHub's unique_cloners and GitLab's
+    # usage_count_30_days ARE genuinely deduplicated. Summing them is still a
+    # useful combined volume signal, but calling the total "unique" overstated
+    # what the PyPI component actually measures.
+    ax.set_title("Cumulative Distribution Volume of GitGalaxy (PyPI Without Mirrors)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Total Unique Fetches (GitHub, PyPI, GitLab)", fontsize=12, labelpad=10)
+    ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
     
     # Format X-axis dates to Year-Month (YYYY-MM)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
@@ -157,8 +163,11 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Render both datasets as lines with identical thicknesses
+    # NOTE: "downloads" here is a combined volume (GitHub unique clones + PyPI
+    # download events + GitLab unique-project usage), not a uniformly
+    # deduplicated count -- see generate_cumulative_graph()'s own note.
     ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, marker='o', label='Unique Profile Views (Intent)')
-    ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, marker='o', label='Unique Fetches (Execution)')
+    ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, marker='o', label='Combined Fetch Volume (Execution)')
     
     # Calculate offset for labels based on the max value in the graph
     y_offset = df[['views', 'downloads']].max().max() * 0.02
@@ -335,7 +344,7 @@ def generate_release_correlation(db_path: str, output_path: str):
     import matplotlib.dates as mdates
     fig, ax = plt.subplots(figsize=(14, 7))
     
-    ax.plot(df['date_dt'], df['cumulative_downloads'], color='#4682B4', linewidth=3, label='Cumulative Unique Fetches')
+    ax.plot(df['date_dt'], df['cumulative_downloads'], color='#4682B4', linewidth=3, label='Cumulative Distribution Volume')
 
     # Sort dates to calculate the 75% threshold for label placement
     sorted_dates = sorted(releases.keys())
@@ -363,7 +372,7 @@ def generate_release_correlation(db_path: str, output_path: str):
 
     ax.set_title("GitGalaxy Cumulative Downloads vs. Release Cadence", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Total Cumulative Fetches", fontsize=12, labelpad=10)
+    ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
     
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     plt.xticks(rotation=45)
@@ -377,6 +386,115 @@ def generate_release_correlation(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
+def generate_human_vs_ci_adoption(db_path: str, output_path: str):
+    """
+    One PNG, two subplots: human-discovery signals (left) vs. production/CI
+    integration signals (right), for squid-protocol/gitgalaxy specifically.
+
+    Deliberately does NOT duplicate the existing cumulative-downloads chart --
+    this is the "is anyone actually running this in CI" story, told with the
+    two signals that chart can't show: GitHub stars/forks (human) and GitLab
+    CI/CD Catalog usage + GitHub Action code-search adoption (production).
+    Raw PyPI download volume stays out of both panels: its scale (100s-1000s/day)
+    dwarfs everything else here, and it already has its own dedicated chart.
+    """
+    conn = sqlite3.connect(db_path)
+
+    human_stars = pd.read_sql_query(
+        "SELECT date, stars, forks FROM repo_stats WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date",
+        conn,
+    )
+    human_clones = pd.read_sql_query(
+        "SELECT date, unique_cloners FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date",
+        conn,
+    )
+    human_views = pd.read_sql_query(
+        "SELECT date, unique_visitors FROM traffic_views WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date",
+        conn,
+    )
+    ci_gitlab = pd.read_sql_query(
+        "SELECT date, usage_count_30_days FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date",
+        conn,
+    )
+    ci_action = pd.read_sql_query("SELECT date, unique_repos FROM action_adoption ORDER BY date", conn)
+    conn.close()
+
+    all_frames = (human_stars, human_clones, human_views, ci_gitlab, ci_action)
+    if all(df.empty for df in all_frames):
+        print("No human-vs-CI adoption data found in the database yet.")
+        return
+
+    for df in all_frames:
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])
+
+    # The CI panel's two series (GitLab Catalog, Action adoption) are both
+    # brand-new collections that may only have a handful of points -- with no
+    # multi-point line to anchor a real range, matplotlib's autoscale can pick
+    # an enormous, meaningless date span (observed: a single point rendered
+    # against a 2024-2028 x-axis). Both panels share one explicit x-range
+    # instead, spanning whichever series actually has the most history --
+    # this also makes the two panels directly comparable at a glance, which
+    # is the whole point of putting them side by side.
+    all_dates = pd.concat([df['date'] for df in all_frames if not df.empty])
+    date_min, date_max = all_dates.min(), all_dates.max()
+    if date_min == date_max:
+        date_min -= pd.Timedelta(days=7)
+        date_max += pd.Timedelta(days=7)
+
+    import matplotlib.dates as mdates
+
+    fig, (ax_human, ax_ci) = plt.subplots(1, 2, figsize=(15, 6))
+
+    # --- Left: Human Discovery ---
+    if not human_stars.empty:
+        ax_human.plot(human_stars['date'], human_stars['stars'], color='#f1c40f', linewidth=2, marker='o',
+                       markersize=4, label='GitHub Stars')
+        ax_human.plot(human_stars['date'], human_stars['forks'], color='#e67e22', linewidth=2, marker='o',
+                       markersize=4, label='GitHub Forks')
+    if not human_clones.empty:
+        ax_human.plot(human_clones['date'], human_clones['unique_cloners'], color='#1f77b4', linewidth=2,
+                       marker='o', markersize=4, label='Unique Cloners (14d)')
+    if not human_views.empty:
+        ax_human.plot(human_views['date'], human_views['unique_visitors'], color='#4682B4', linewidth=1.5,
+                       linestyle='--', marker='o', markersize=4, label='Unique Profile Views (14d)')
+
+    # No emoji in titles: matplotlib's default DejaVu Sans font has no emoji
+    # glyphs, so they'd render as empty tofu boxes on the CI runner that
+    # generates this -- confirmed by rendering it once. Emoji are fine in the
+    # README's own markdown heading around the embedded image, just not baked
+    # into the raster PNG itself.
+    ax_human.set_title("Human Discovery", fontsize=14, fontweight='bold')
+    ax_human.set_ylabel("Count", fontsize=11)
+    ax_human.legend(loc='upper left', fontsize=9)
+
+    # --- Right: Production / CI Integration ---
+    if not ci_gitlab.empty:
+        ax_ci.plot(ci_gitlab['date'], ci_gitlab['usage_count_30_days'], color='#9467bd', linewidth=2, marker='o',
+                    markersize=4, label='GitLab CI/CD Catalog\n(unique projects, 30d)')
+    if not ci_action.empty:
+        ax_ci.plot(ci_action['date'], ci_action['unique_repos'], color='#2ca02c', linewidth=2, marker='o',
+                    markersize=4, label='GitHub Action\n(unique repos, code search)')
+
+    ax_ci.set_title("Production / CI Integration", fontsize=14, fontweight='bold')
+    ax_ci.set_ylabel("Count", fontsize=11)
+    ax_ci.legend(loc='upper left', fontsize=9)
+
+    for ax in (ax_human, ax_ci):
+        ax.set_xlabel("Date", fontsize=11)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        ax.tick_params(axis='x', rotation=45)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, linestyle='--', alpha=0.3)
+        ax.set_ylim(bottom=0)
+        ax.set_xlim(date_min, date_max)
+
+    fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=16, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
 if __name__ == "__main__":
     db = "traffic_metrics.db"
     generate_cumulative_graph(db, "cumulative_downloads.png")
@@ -384,3 +502,4 @@ if __name__ == "__main__":
     generate_discovery_engine(db, "discovery_channels.png")
     generate_feature_heatmap(db, "feature_intent.png")
     generate_release_correlation(db, "release_correlation.png")
+    generate_human_vs_ci_adoption(db, "human_vs_ci_adoption.png")
