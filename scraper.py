@@ -241,22 +241,48 @@ def fetch_and_store(conn):
             }
             """
             url_gitlab = "https://gitlab.com/api/graphql"
-            resp_gitlab = requests.post(
-                url_gitlab, 
-                headers=GITLAB_HEADERS, 
-                json={"query": query, "variables": {"fullPath": gitlab_path}}
-            )
-            
-            if resp_gitlab.status_code == 200:
-                gl_data = resp_gitlab.json().get('data', {}).get('ciCatalogResource')
-                if gl_data:
-                    usage_count = gl_data.get('last30DayUsageCount', 0)
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO gitlab_catalog_usage (repo_name, date, usage_count_30_days)
-                        VALUES (?, ?, ?)
-                    """, (repo, today_str, usage_count))
+
+            def _query_gitlab(headers):
+                resp = requests.post(
+                    url_gitlab,
+                    headers=headers,
+                    json={"query": query, "variables": {"fullPath": gitlab_path}}
+                )
+                if resp.status_code != 200:
+                    logging.error(f"GitLab usage fetch for {gitlab_path} returned HTTP {resp.status_code}: {resp.text}")
+                    return None
+                body = resp.json()
+                # GraphQL endpoints commonly return HTTP 200 even when the query
+                # itself failed (auth problems, resolver errors, etc.), with the
+                # actual problem living in a top-level "errors" array instead of
+                # the status code -- log it explicitly rather than silently
+                # falling through to "no data".
+                if body.get('errors'):
+                    logging.error(f"GitLab GraphQL errors for {gitlab_path}: {body['errors']}")
+                return body.get('data', {}).get('ciCatalogResource')
+
+            # BUG FIX: a prior run of this scraper (2026-07-31, production) sent
+            # the authenticated request and got back HTTP 200 with a NULL
+            # ciCatalogResource -- silently skipped, no log line at all, because
+            # this branch previously had no logging for that case. Confirmed via
+            # a bare unauthenticated curl that this specific query works fine
+            # against this public catalog resource with zero auth, so if the
+            # (possibly stale/wrong-scoped) PAT's request comes back empty, retry
+            # anonymously before giving up -- known-good fallback, not a guess.
+            gl_data = _query_gitlab(GITLAB_HEADERS) if GITLAB_HEADERS else None
+            if not gl_data:
+                if GITLAB_HEADERS:
+                    logging.info(f"Authenticated GitLab query for {gitlab_path} returned no data; retrying anonymously.")
+                gl_data = _query_gitlab({})
+
+            if gl_data:
+                usage_count = gl_data.get('last30DayUsageCount', 0)
+                cursor.execute("""
+                    INSERT OR REPLACE INTO gitlab_catalog_usage (repo_name, date, usage_count_30_days)
+                    VALUES (?, ?, ?)
+                """, (repo, today_str, usage_count))
             else:
-                logging.error(f"Failed to fetch GitLab usage for {gitlab_path}: {resp_gitlab.status_code} - {resp_gitlab.text}")
+                logging.error(f"GitLab usage for {gitlab_path} unavailable via both authenticated and anonymous query.")
 
     conn.commit()
     logging.info("Telemetry successfully committed to SQLite.")
