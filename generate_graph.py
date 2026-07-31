@@ -141,6 +141,35 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
+def _label_rolling_peaks(ax, dates, values, color, window=5, top_n=6):
+    """
+    Labels only the top_n statistically real peaks in a series -- local
+    maxima ranked by z-score against a centered rolling mean/std -- instead
+    of every point or an arbitrary fixed stride. Adaptive: as the series
+    grows, the same top_n most-prominent peaks surface regardless of how
+    many points now exist, rather than an arbitrary stride drifting in and
+    out of alignment with the real high points.
+    """
+    s = pd.Series(list(values), index=pd.DatetimeIndex(dates))
+    if len(s) < 3:
+        return
+    roll_mean = s.rolling(window, center=True, min_periods=3).mean()
+    roll_std = s.rolling(window, center=True, min_periods=3).std(ddof=0)
+    z = ((s - roll_mean) / roll_std.replace(0, float('nan'))).fillna(0)
+
+    # Local maxima only -- higher than each available neighbor -- so a point
+    # partway up a single big jump doesn't get labeled just because the jump
+    # itself pushed its z-score high.
+    prev_val, next_val = s.shift(1), s.shift(-1)
+    is_peak = ((s > prev_val) | prev_val.isna()) & ((s > next_val) | next_val.isna())
+
+    top_dates = z[is_peak].sort_values(ascending=False).head(top_n).index
+    y_offset = s.max() * 0.02
+    for d in top_dates:
+        y = s.loc[d]
+        ax.text(d, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9,
+                 color=color, fontweight='bold')
+
 def generate_conversion_funnel(db_path: str, output_path: str):
     conn = sqlite3.connect(db_path)
     query = """
@@ -194,16 +223,11 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, label='Unique Profile Views (Intent)')
     ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, label='Combined Fetch Volume (Execution)')
 
-    # Calculate offset for labels based on the max value in the graph
-    y_offset = df[['views', 'downloads']].max().max() * 0.02
-
-    # Numeric labels only on every 10th point of the downloads line -- with
-    # all-time data now spanning 30+ points (see the all-time fix above),
-    # labeling every single point on both lines was illegible clutter.
-    # Views labels dropped entirely: that line hugs 0 on this scale, so its
-    # labels were the densest and least readable of the two anyway.
-    for x, y in list(zip(df['date_dt'], df['downloads']))[::10]:
-        ax.text(x, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9, color='#00008B', fontweight='bold')
+    # Numeric labels only on the downloads line's real statistical peaks --
+    # see _label_rolling_peaks docstring. Views labels dropped entirely: that
+    # line hugs 0 on this scale, so its labels were the densest and least
+    # readable of the two anyway.
+    _label_rolling_peaks(ax, df['date_dt'], df['downloads'], color='#00008B')
     
     ax.set_title("GitGalaxy Conversion Funnel (All-Time)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
