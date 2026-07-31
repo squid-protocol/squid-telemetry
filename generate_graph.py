@@ -8,36 +8,48 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     # 1. Connect to the database and extract the daily totals
     conn = sqlite3.connect(db_path)
     
+    # BUG FIX: the GitHub component used to sum `unique_cloners` (a genuinely
+    # deduplicated daily count) cumulatively -- but summing daily uniques
+    # across days double-counts anyone who cloned on more than one day, since
+    # GitHub's per-day uniqueness aggregate retains no cross-day identity to
+    # de-overlap against (same repeat-visitor inflation documented on the
+    # human-vs-CI chart). Switched to `total_clones` (raw clone-request
+    # events, already collected, unused until now) so all three sources --
+    # PyPI downloads, GitHub clones, GitLab catalog usage -- are now
+    # consistently "distribution activity volume", not a mix of unique-headcount
+    # and raw-event semantics. This chart was never meant to measure
+    # uniqueness (see the human-vs-CI chart for that); now it's honestly
+    # scoped to volume throughout, matching its own title.
     query = """
         WITH combined_traffic AS (
             -- 1. Baseline Repositories (Aggregated Totals)
             SELECT repo_name, date, downloads as volume FROM pypi_downloads WHERE repo_name != 'squid-protocol/gitgalaxy'
             UNION ALL
-            SELECT repo_name, date, unique_cloners as volume FROM traffic_clones WHERE repo_name != 'squid-protocol/gitgalaxy'
+            SELECT repo_name, date, total_clones as volume FROM traffic_clones WHERE repo_name != 'squid-protocol/gitgalaxy'
             UNION ALL
             SELECT repo_name, date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (PARTITION BY repo_name ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name != 'squid-protocol/gitgalaxy'
-            
+
             UNION ALL
-            
+
             -- 2. GitGalaxy Total
             SELECT 'gitgalaxy_total' as repo_name, date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
-            SELECT 'gitgalaxy_total' as repo_name, date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            SELECT 'gitgalaxy_total' as repo_name, date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
             SELECT 'gitgalaxy_total' as repo_name, date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
-            
+
             UNION ALL
-            
+
             -- 3. GitGalaxy Components
             SELECT 'gitgalaxy_pypi' as repo_name, date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
-            SELECT 'gitgalaxy_github' as repo_name, date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            SELECT 'gitgalaxy_github' as repo_name, date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
             SELECT 'gitgalaxy_gitlab' as repo_name, date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
         )
-        SELECT repo_name, date, SUM(volume) as daily_downloads 
-        FROM combined_traffic 
-        GROUP BY repo_name, date 
+        SELECT repo_name, date, SUM(volume) as daily_downloads
+        FROM combined_traffic
+        GROUP BY repo_name, date
         ORDER BY date ASC;
     """
     df = pd.read_sql_query(query, conn)
@@ -98,11 +110,13 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     
     # Formatting the chart
     # NOTE: deliberately not labeled "Unique Fetches" -- PyPI's without_mirrors
-    # count is raw download EVENTS (no dedup possible, PyPI's public dataset has
-    # no identity to dedup against), while GitHub's unique_cloners and GitLab's
-    # usage_count_30_days ARE genuinely deduplicated. Summing them is still a
-    # useful combined volume signal, but calling the total "unique" overstated
-    # what the PyPI component actually measures.
+    # count is raw download EVENTS (no dedup possible, PyPI's public dataset
+    # has no identity to dedup against), GitHub's total_clones is likewise a
+    # raw clone-request event count (see the query comment above for why this
+    # replaced unique_cloners), and only GitLab's usage_count_30_days is
+    # genuinely deduplicated (per-project, per GitLab's own docs). Summing
+    # them is a useful combined *volume* signal, but not a "unique adopters"
+    # count -- see the separate human-vs-CI chart for that story instead.
     ax.set_title("Cumulative Distribution Volume of GitGalaxy (PyPI Without Mirrors)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
@@ -453,7 +467,7 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
     # per explicit request -- small multi-panel text was hard to read at the
     # size this normally renders at in a README. Bold applied to axis/tick/
     # legend text too (titles were already bold).
-    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 20, 17, 14, 15, 24
+    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 22, 19, 16, 17, 26
 
     def _plot_series(ax, df, y_col, **kwargs):
         """
