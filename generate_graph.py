@@ -467,7 +467,7 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
     # per explicit request -- small multi-panel text was hard to read at the
     # size this normally renders at in a README. Bold applied to axis/tick/
     # legend text too (titles were already bold).
-    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 22, 19, 16, 17, 26
+    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 24, 21, 18, 19, 28
 
     def _plot_series(ax, df, y_col, **kwargs):
         """
@@ -555,25 +555,26 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # The flat gray segment marks the period before clones/views tracking
         # existed at all -- without it, this panel just has a big, unexplained
         # blank gap before the real lines start, which reads as broken rather
-        # than "not tracked yet".
+        # than "not tracked yet". No legend label (kept out of the legend
+        # deliberately, per request, to keep it simple) -- the gray color
+        # already reads as "not real data" against the colored lines.
         traffic_dates = pd.concat([df['date'] for df in (human_clones, human_views) if not df.empty])
         if not traffic_dates.empty and traffic_dates.min() > date_min:
-            ax_traffic.plot([date_min, traffic_dates.min()], [0, 0], color='#999999', linewidth=2,
-                            label='Not yet tracked', zorder=1)
+            ax_traffic.plot([date_min, traffic_dates.min()], [0, 0], color='#999999', linewidth=2, zorder=1)
         _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#1f77b4', linewidth=2, label='Unique Cloners')
         _plot_series(ax_traffic, human_views, 'unique_visitors', color='#4682B4', linewidth=1.5, linestyle='--',
                      label='Unique Profile Views')
         ax_traffic.set_title("Repository Traffic", fontsize=TITLE_FS, fontweight='bold')
 
         # --- Panel 3: Production / CI Integration ---
-        # Simplified single-line legend labels (methodology detail -- "unique
-        # projects, 30d", "unique repos via code search" -- lives in the
-        # README caption instead of cluttering the in-chart legend).
+        # Legend labels kept to just the platform name -- all methodology
+        # detail ("unique projects, 30d", "unique repos via code search")
+        # lives in the README caption instead of the in-chart legend.
         # drawstyle='steps-post': both series are discrete counts that only
         # change when checked, not continuous quantities -- a step is the
         # honest rendering, not an interpolated slope between check-ins.
         _plot_series(ax_ci, ci_gitlab, 'usage_count_30_days', color='#9467bd', linewidth=2.5,
-                     drawstyle='steps-post', label='GitLab CI/CD Catalog')
+                     drawstyle='steps-post', label='GitLab')
         _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=2.5,
                      drawstyle='steps-post', label='GitHub Action')
         ax_ci.set_title("Production / CI Integration", fontsize=TITLE_FS, fontweight='bold')
@@ -602,7 +603,10 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
             ax.set_xlim(date_min, date_max)
             ax.legend(loc='upper left', framealpha=0.9, prop={'size': LEGEND_FS, 'weight': 'bold'})
 
-        fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=SUPTITLE_FS,
+        # Simpler, plain-language title -- "Human Discovery vs. Production
+        # Integration" reads like an internal analytics label, not something
+        # a general reader parses at a glance.
+        fig.suptitle("GitGalaxy: Discovery & Usage", fontsize=SUPTITLE_FS,
                      fontweight='bold', y=1.03)
         plt.tight_layout()
         plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
