@@ -22,15 +22,15 @@ GitGalaxy is meant to run *in* CI, not just get starred and forgotten — so ins
 Tracking the combined volume of fetches across PyPI, GitHub, and GitLab against our baseline control repositories. **Not a uniformly deduplicated count** — GitHub's unique-cloner count and GitLab's unique-project count are genuinely deduplicated, but PyPI's public download data has no identity to deduplicate against, so that component is a raw download-event count (see Methodology below).
 ![GitGalaxy Cumulative Downloads](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/cumulative_downloads.png)
 
-### The Conversion Funnel (14-Day Rolling)
+### The Conversion Funnel (All-Time)
 Measuring the transition from passive human intent (unique repository profile views) to active pipeline execution (unique automated fetches).
 ![Conversion Funnel](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/conversion_funnel.png)
 
-### Discovery Channels (14-Day Rolling)
+### Discovery Channels (All-Time)
 Identifying the top referring external domains driving initial human discovery of the GitGalaxy architecture.
 ![Discovery Channels](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/discovery_channels.png)
 
-### Feature Intent Heatmap (14-Day Rolling)
+### Feature Intent Heatmap (All-Time)
 Mapping the most frequently inspected sub-directories and tools to understand what features users are auditing before pulling the engine.
 ![Feature Intent](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/feature_intent.png)
 

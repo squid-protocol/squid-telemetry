@@ -164,8 +164,17 @@ def generate_conversion_funnel(db_path: str, output_path: str):
         SELECT v.date, v.views, COALESCE(d.total_downloads, 0) as downloads
         FROM views v
         LEFT JOIN agg_downloads d ON v.date = d.date
-        ORDER BY v.date DESC LIMIT 14;
+        ORDER BY v.date ASC;
     """
+    # BUG FIX: this used to hard-limit to the last 14 rows, labeled "14-Day
+    # Rolling" -- but that name described the ROLLING WINDOW GitHub's traffic
+    # API itself returns (each call only exposes the trailing 14 days), not
+    # a deliberate choice to only ever chart 14 days total. Once the pipeline
+    # has been running longer than 14 days, `traffic_views` genuinely holds
+    # more history than that (each day's real value was captured before it
+    # aged out of GitHub's own 14-day window) -- so showing only the last 14
+    # rows was throwing away real collected history for no reason. Now shows
+    # everything collected so far.
     df = pd.read_sql_query(query, conn)
     conn.close()
     
@@ -194,15 +203,16 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     for x, y in zip(df['date_dt'], df['downloads']):
         ax.text(x, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9, color='#00008B', fontweight='bold')
     
-    ax.set_title("GitGalaxy Conversion Funnel (14-Day Rolling)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("GitGalaxy Conversion Funnel (All-Time)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Count", fontsize=12, labelpad=10)
 
     import matplotlib.dates as mdates
-    # BUG FIX: '%Y-%m' (month-only) on a 14-day window means every single tick
-    # renders as the same "2026-07" label -- useless for a chart whose whole
-    # point is showing day-to-day movement. Day-level format instead.
+    # Day-level format (not '%Y-%m' -- month-only was unreadable on the old
+    # 14-day window) capped at a reasonable tick count via AutoDateLocator so
+    # it stays legible as more history accumulates, instead of a tick per day.
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=12))
     plt.xticks(rotation=45)
     
     ax.legend(loc='upper left')
@@ -213,13 +223,47 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
     
+def _add_end_of_line_labels(ax, pivot_df, colors, min_gap_frac=0.045):
+    """
+    Labels each line at its own final data point instead of a separate
+    legend box, so a line's identity sits at the height where it actually
+    ends -- no lookup between a legend swatch and the plot required. Labels
+    are nudged apart (min_gap_frac of the y-range) when two series end at
+    close values, so they don't render on top of each other.
+    """
+    if pivot_df.empty:
+        return
+    first_x, last_x = pivot_df.index.min(), pivot_df.index.max()
+    y_min, y_max = ax.get_ylim()
+    min_gap = (y_max - y_min) * min_gap_frac
+
+    endpoints = sorted(
+        ((pivot_df[col].iloc[-1], col, colors[col]) for col in pivot_df.columns),
+        key=lambda t: t[0],
+    )
+    adjusted = []
+    for y, label, color in endpoints:
+        if adjusted and y - adjusted[-1][0] < min_gap:
+            y = adjusted[-1][0] + min_gap
+        adjusted.append((y, label, color))
+
+    # Reserve room to the right of the data for the labels themselves.
+    ax.set_xlim(first_x, last_x + (last_x - first_x) * 0.22)
+    for y, label, color in adjusted:
+        ax.text(last_x, y, f'  {label}', color=color, va='center', ha='left',
+                 fontsize=10, fontweight='bold')
+
 def generate_discovery_engine(db_path: str, output_path: str):
     conn = sqlite3.connect(db_path)
+    # All-time data, not just the trailing 14 days: GitHub's traffic API
+    # itself only ever exposes a 14-day rolling window per call, but we've
+    # been archiving each day's snapshot since scraping started -- so our
+    # own table holds more history than a single API call would, and there's
+    # no reason to throw that away when rendering.
     query = """
-        SELECT fetch_date as date, site, SUM(unique_visitors) as unique_visitors 
-        FROM referring_sites 
-        WHERE repo_name = 'squid-protocol/gitgalaxy' 
-          AND fetch_date IN (SELECT DISTINCT fetch_date FROM referring_sites WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY fetch_date DESC LIMIT 14)
+        SELECT fetch_date as date, site, SUM(unique_visitors) as unique_visitors
+        FROM referring_sites
+        WHERE repo_name = 'squid-protocol/gitgalaxy'
         GROUP BY date, site
         ORDER BY date ASC;
     """
@@ -249,21 +293,22 @@ def generate_discovery_engine(db_path: str, output_path: str):
     pivot_df = pivot_df[top_sites]
     
     fig, ax = plt.subplots(figsize=(10, 6))
+    colors = {}
     for site in pivot_df.columns:
-        ax.plot(pivot_df.index, pivot_df[site], linewidth=2, label=site)
+        line, = ax.plot(pivot_df.index, pivot_df[site], linewidth=2, label=site)
+        colors[site] = line.get_color()
 
-    ax.set_title("Top Discovery Channels (14-Day Rolling Timeline)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("Top Discovery Channels (All-Time)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
 
     import matplotlib.dates as mdates
-    # Day-level format -- see conversion_funnel's identical fix above;
-    # month-only was unreadable on a 14-day window.
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=12))
     plt.xticks(rotation=45)
-    
-    # Push legend outside the plot to avoid overlapping the data lines
-    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
+
+    # End-of-line labels replace the boxed legend -- see helper docstring.
+    _add_end_of_line_labels(ax, pivot_df, colors)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(True, linestyle='--', alpha=0.3)
@@ -272,11 +317,12 @@ def generate_discovery_engine(db_path: str, output_path: str):
     print(f"Graph successfully rendered to: {output_path}")
 def generate_feature_heatmap(db_path: str, output_path: str):
     conn = sqlite3.connect(db_path)
+    # All-time data -- see generate_discovery_engine's identical comment
+    # above; our table holds more history than GitHub's 14-day API window.
     query = """
-        SELECT fetch_date as date, path, SUM(unique_visitors) as unique_visitors 
-        FROM popular_content 
-        WHERE repo_name = 'squid-protocol/gitgalaxy' 
-          AND fetch_date IN (SELECT DISTINCT fetch_date FROM popular_content WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY fetch_date DESC LIMIT 14)
+        SELECT fetch_date as date, path, SUM(unique_visitors) as unique_visitors
+        FROM popular_content
+        WHERE repo_name = 'squid-protocol/gitgalaxy'
           AND path NOT LIKE '%/issues%'
           AND path NOT LIKE '%/pulls%'
           AND path NOT LIKE '%/pulse%'
@@ -299,13 +345,13 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     # BUG FIX: a deep file path (e.g.
     # "gitgalaxy/tools/terabyte_log_scanning/terabyte_log_scanner.py") was
     # still the FULL relative path after the repo-prefix strip above -- long
-    # enough to blow out the legend's width on its own. Collapse anything
-    # with more than 2 path segments down to just "parent-dir/filename",
-    # prefixed with an ellipsis so it still reads as "somewhere deeper", not
-    # like the whole path.
+    # enough to blow out the legend's width on its own. With end-of-line
+    # labels replacing the legend box, the label now sits inline on the plot
+    # itself, so keep only the final segment (the file/dir actually being
+    # visited) prefixed with an ellipsis to signal there's more path above it.
     def _shorten_path(p):
         parts = p.strip('/').split('/')
-        return p if len(parts) <= 2 else '.../' + '/'.join(parts[-2:])
+        return p if len(parts) <= 1 else '.../' + parts[-1]
     df['clean_path'] = df['clean_path'].apply(_shorten_path)
 
     df['date_dt'] = pd.to_datetime(df['date'])
@@ -316,20 +362,22 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     pivot_df = pivot_df[top_paths]
 
     fig, ax = plt.subplots(figsize=(10, 6))
+    colors = {}
     for path in pivot_df.columns:
-        ax.plot(pivot_df.index, pivot_df[path], linewidth=2, label=path)
+        line, = ax.plot(pivot_df.index, pivot_df[path], linewidth=2, label=path)
+        colors[path] = line.get_color()
 
-    ax.set_title("Feature Intent Patterns (14-Day Rolling Timeline)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("Feature Intent Patterns (All-Time)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
 
     import matplotlib.dates as mdates
-    # Day-level format -- see conversion_funnel's identical fix above;
-    # month-only was unreadable on a 14-day window.
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=12))
     plt.xticks(rotation=45)
-    
-    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
+
+    # End-of-line labels replace the boxed legend -- see helper docstring.
+    _add_end_of_line_labels(ax, pivot_df, colors)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(True, linestyle='--', alpha=0.3)
@@ -525,7 +573,7 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
     # per explicit request -- small multi-panel text was hard to read at the
     # size this normally renders at in a README. Bold applied to axis/tick/
     # legend text too (titles were already bold).
-    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 24, 21, 18, 19, 28
+    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 26, 23, 20, 21, 30
 
     def _plot_series(ax, df, y_col, **kwargs):
         """
