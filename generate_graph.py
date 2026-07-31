@@ -388,15 +388,19 @@ def generate_release_correlation(db_path: str, output_path: str):
 
 def generate_human_vs_ci_adoption(db_path: str, output_path: str):
     """
-    One PNG, two subplots: human-discovery signals (left) vs. production/CI
-    integration signals (right), for squid-protocol/gitgalaxy specifically.
+    One PNG, three subplots, for squid-protocol/gitgalaxy specifically:
+    (1) stars/forks, (2) daily repo traffic (unique cloners/views), and
+    (3) production/CI integration (GitLab CI/CD Catalog + GitHub Action
+    code-search adoption). Split into three instead of the original two
+    because stars/forks (cumulative, long real history) and cloners/views
+    (daily, deliberately not cumulative) are different enough kinds of series
+    that sharing one panel undersold both.
 
     Deliberately does NOT duplicate the existing cumulative-downloads chart --
-    this is the "is anyone actually running this in CI" story, told with the
-    two signals that chart can't show: GitHub stars/forks (human) and GitLab
-    CI/CD Catalog usage + GitHub Action code-search adoption (production).
-    Raw PyPI download volume stays out of both panels: its scale (100s-1000s/day)
-    dwarfs everything else here, and it already has its own dedicated chart.
+    this is the "is anyone actually running this in CI" story, told with
+    signals that chart can't show. Raw PyPI download volume stays out of all
+    three panels: its scale (100s-1000s/day) dwarfs everything else here, and
+    it already has its own dedicated chart.
     """
     conn = sqlite3.connect(db_path)
 
@@ -444,66 +448,80 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
 
     import matplotlib.dates as mdates
 
-    fig, (ax_human, ax_ci) = plt.subplots(1, 2, figsize=(15, 6))
+    def _plot_series(ax, df, y_col, **kwargs):
+        """
+        Plain line, no markers -- except when a series has too few points
+        for a line to render at all (a brand-new collection like GitLab
+        Catalog/Action adoption may only have one point so far), in which
+        case a single marker is the only way to show it exists at all.
+        """
+        if df.empty:
+            return
+        if len(df) == 1:
+            kwargs.pop('linestyle', None)
+            ax.plot(df['date'], df[y_col], marker='o', markersize=6, linestyle='', **kwargs)
+        else:
+            ax.plot(df['date'], df[y_col], **kwargs)
 
-    # --- Left: Human Discovery ---
-    # NOTE on labeling: stars/forks are genuinely cumulative (reconstructed
-    # from each star's/fork's own timestamp -- see scraper.py's
-    # _cumulative_by_date, a valid use of cumulative math since each star/fork
-    # is a single non-repeatable action). Cloners/views are daily counts, NOT
-    # a rolling 14-day window despite the old label implying that -- GitHub's
-    # traffic API returns one entry per calendar day, it just only exposes
-    # the trailing 14 days of them. They're deliberately NOT cumsum'd here:
-    # summing daily "uniques" across days double-counts anyone who visited on
-    # more than one day, since GitHub's per-day uniqueness aggregate retains
-    # no cross-day identity to de-overlap against -- there's no valid way to
-    # recover a true cumulative-unique-visitor count from these aggregates.
-    if not human_stars.empty:
-        ax_human.plot(human_stars['date'], human_stars['stars'], color='#f1c40f', linewidth=2, marker='o',
-                       markersize=4, label='GitHub Stars (cumulative)')
-        ax_human.plot(human_stars['date'], human_stars['forks'], color='#e67e22', linewidth=2, marker='o',
-                       markersize=4, label='GitHub Forks (cumulative)')
-    if not human_clones.empty:
-        ax_human.plot(human_clones['date'], human_clones['unique_cloners'], color='#1f77b4', linewidth=2,
-                       marker='o', markersize=4, label='Unique Cloners (daily)')
-    if not human_views.empty:
-        ax_human.plot(human_views['date'], human_views['unique_visitors'], color='#4682B4', linewidth=1.5,
-                       linestyle='--', marker='o', markersize=4, label='Unique Profile Views (daily)')
+    # Matplotlib's built-in seaborn-derived stylesheet -- gives the clean
+    # whitegrid look without adding an actual seaborn dependency to the
+    # pipeline's `pip install requests pandas matplotlib` step. Scoped to
+    # just this figure via the context manager so it doesn't change the
+    # other 5 charts' existing look.
+    with plt.style.context('seaborn-v0_8-whitegrid'):
+        fig, (ax_stars, ax_traffic, ax_ci) = plt.subplots(1, 3, figsize=(20, 6))
 
-    # No emoji in titles: matplotlib's default DejaVu Sans font has no emoji
-    # glyphs, so they'd render as empty tofu boxes on the CI runner that
-    # generates this -- confirmed by rendering it once. Emoji are fine in the
-    # README's own markdown heading around the embedded image, just not baked
-    # into the raster PNG itself.
-    ax_human.set_title("Human Discovery", fontsize=14, fontweight='bold')
-    ax_human.set_ylabel("Count", fontsize=11)
-    ax_human.legend(loc='upper left', fontsize=9)
+        # --- Panel 1: Stars & Forks ---
+        # Genuinely cumulative (reconstructed from each star's/fork's own
+        # timestamp -- see scraper.py's _cumulative_by_date, a valid use of
+        # cumulative math since each star/fork is a single non-repeatable
+        # action, unlike cloners/views below).
+        _plot_series(ax_stars, human_stars, 'stars', color='#f1c40f', linewidth=2.5, label='GitHub Stars')
+        _plot_series(ax_stars, human_stars, 'forks', color='#e67e22', linewidth=2.5, label='GitHub Forks')
+        ax_stars.set_title("Stars & Forks (cumulative)", fontsize=14, fontweight='bold')
+        ax_stars.set_ylabel("Count", fontsize=11)
+        ax_stars.legend(loc='upper left', fontsize=9)
 
-    # --- Right: Production / CI Integration ---
-    if not ci_gitlab.empty:
-        ax_ci.plot(ci_gitlab['date'], ci_gitlab['usage_count_30_days'], color='#9467bd', linewidth=2, marker='o',
-                    markersize=4, label='GitLab CI/CD Catalog\n(unique projects, 30d)')
-    if not ci_action.empty:
-        ax_ci.plot(ci_action['date'], ci_action['unique_repos'], color='#2ca02c', linewidth=2, marker='o',
-                    markersize=4, label='GitHub Action\n(unique repos, code search)')
+        # --- Panel 2: Repository Traffic ---
+        # Daily counts, NOT a rolling 14-day window despite the old chart's
+        # label implying that -- GitHub's traffic API returns one entry per
+        # calendar day, it just only exposes the trailing 14 days of them.
+        # Deliberately NOT cumsum'd: summing daily "uniques" across days
+        # double-counts anyone who visited on more than one day, since
+        # GitHub's per-day uniqueness aggregate retains no cross-day identity
+        # to de-overlap against -- there's no valid way to recover a true
+        # cumulative-unique-visitor count from these aggregates.
+        _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#1f77b4', linewidth=2, label='Unique Cloners')
+        _plot_series(ax_traffic, human_views, 'unique_visitors', color='#4682B4', linewidth=1.5, linestyle='--',
+                     label='Unique Profile Views')
+        ax_traffic.set_title("Repository Traffic (daily)", fontsize=14, fontweight='bold')
+        ax_traffic.set_ylabel("Count", fontsize=11)
+        ax_traffic.legend(loc='upper left', fontsize=9)
 
-    ax_ci.set_title("Production / CI Integration", fontsize=14, fontweight='bold')
-    ax_ci.set_ylabel("Count", fontsize=11)
-    ax_ci.legend(loc='upper left', fontsize=9)
+        # --- Panel 3: Production / CI Integration ---
+        _plot_series(ax_ci, ci_gitlab, 'usage_count_30_days', color='#9467bd', linewidth=2.5,
+                     label='GitLab CI/CD Catalog\n(unique projects, 30d)')
+        _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=2.5,
+                     label='GitHub Action\n(unique repos, code search)')
+        ax_ci.set_title("Production / CI Integration", fontsize=14, fontweight='bold')
+        ax_ci.set_ylabel("Count", fontsize=11)
+        ax_ci.legend(loc='upper left', fontsize=9)
 
-    for ax in (ax_human, ax_ci):
-        ax.set_xlabel("Date", fontsize=11)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        ax.tick_params(axis='x', rotation=45)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.grid(True, linestyle='--', alpha=0.3)
-        ax.set_ylim(bottom=0)
-        ax.set_xlim(date_min, date_max)
+        # No emoji anywhere in this figure: matplotlib's default DejaVu Sans
+        # font has no emoji glyphs, so they'd render as empty tofu boxes on
+        # the CI runner that generates this (confirmed by rendering it once).
+        # Emoji are fine in the README's own markdown heading around the
+        # embedded image, just not baked into the raster PNG itself.
+        for ax in (ax_stars, ax_traffic, ax_ci):
+            ax.set_xlabel("Date", fontsize=11)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax.tick_params(axis='x', rotation=45)
+            ax.set_ylim(bottom=0)
+            ax.set_xlim(date_min, date_max)
 
-    fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=16, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+        fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=16, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
 if __name__ == "__main__":
