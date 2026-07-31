@@ -2,7 +2,7 @@ import os
 import requests
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -126,6 +126,50 @@ def init_db(conn):
     """)
     conn.commit()
 
+def _fetch_all_pages(url, headers, params=None):
+    """Fetches every page of a paginated GitHub REST list endpoint."""
+    results = []
+    page = 1
+    while True:
+        page_params = dict(params or {})
+        page_params.update({"per_page": 100, "page": page})
+        resp = requests.get(url, headers=headers, params=page_params)
+        if resp.status_code != 200:
+            logging.error(f"Failed to fetch page {page} of {url}: {resp.status_code} - {resp.text}")
+            break
+        batch = resp.json()
+        if not batch:
+            break
+        results.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return results
+
+def _cumulative_by_date(event_dates, start_date, end_date):
+    """
+    Given a list of 'YYYY-MM-DD' event dates (e.g. one per star/fork), returns
+    {date: running_total} for every calendar day from start_date to end_date
+    inclusive. This is the one place cumulative math is actually valid here:
+    each event (a star, a fork) is a distinct, non-repeatable action by
+    construction -- unlike "unique cloners", there's no repeat-visitor
+    double-counting risk to worry about.
+    """
+    event_dates = sorted(event_dates)
+    result = {}
+    idx = 0
+    count = 0
+    d = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    while d <= end:
+        d_str = d.strftime('%Y-%m-%d')
+        while idx < len(event_dates) and event_dates[idx] <= d_str:
+            count += 1
+            idx += 1
+        result[d_str] = count
+        d += timedelta(days=1)
+    return result
+
 def fetch_and_store(conn):
     """Hits the GitHub API and upserts the 14-day sliding window data."""
     cursor = conn.cursor()
@@ -135,13 +179,53 @@ def fetch_and_store(conn):
         logging.info(f"Scraping telemetry for {repo}...")
 
         # 0. Repo Stats (Stars/Forks/Open Issues) -- human-discovery signal.
-        # Unlike traffic/clones/views, this is a plain point-in-time snapshot
-        # (no rolling window), and public/unauthenticated, but we still send
-        # HEADERS to get the higher authenticated rate limit.
+        # Unlike unique_cloners/unique_visitors, stars and forks are each a
+        # single, non-repeatable action with GitHub's own timestamp attached
+        # (starred_at / created_at) -- so instead of waiting weeks for daily
+        # snapshots to build a trend, reconstruct the REAL historical curve
+        # right now from every current stargazer's/fork's own timestamp, and
+        # backfill every day since the first one. Re-derived from the live
+        # list on every run, so it's self-correcting (a missed day heals
+        # itself; an unstarred repo's historical curve adjusts down too,
+        # which is more honest than a frozen snapshot would be).
+        #
+        # Known caveat: this only sees CURRENTLY-EXISTING stars/forks -- a
+        # star or fork that was later removed/deleted doesn't appear in
+        # today's list at all, so historical peaks before a removal are
+        # invisible. Not fixable without GitHub retaining removal events,
+        # which it doesn't expose.
         url_repo = f"https://api.github.com/repos/{repo}"
         resp_repo = requests.get(url_repo, headers=HEADERS)
-        if resp_repo.status_code == 200:
-            repo_data = resp_repo.json()
+        if resp_repo.status_code != 200:
+            logging.error(f"Failed to fetch repo stats for {repo}: {resp_repo.status_code} - {resp_repo.text}")
+            continue
+
+        repo_data = resp_repo.json()
+        open_issues = repo_data.get('open_issues_count', 0)
+
+        star_headers = {**HEADERS, "Accept": "application/vnd.github.star+json"}
+        stargazers = _fetch_all_pages(f"{url_repo}/stargazers", star_headers)
+        forks = _fetch_all_pages(f"{url_repo}/forks", HEADERS, params={"sort": "oldest"})
+        star_dates = [s['starred_at'][:10] for s in stargazers if 'starred_at' in s]
+        fork_dates = [f['created_at'][:10] for f in forks if 'created_at' in f]
+
+        if star_dates or fork_dates:
+            earliest = min(star_dates + fork_dates)
+            stars_by_date = _cumulative_by_date(star_dates, earliest, today_str)
+            forks_by_date = _cumulative_by_date(fork_dates, earliest, today_str)
+            for d in sorted(set(stars_by_date) | set(forks_by_date)):
+                cursor.execute("""
+                    INSERT OR REPLACE INTO repo_stats (repo_name, date, stars, forks, open_issues)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    repo, d,
+                    stars_by_date.get(d, 0),
+                    forks_by_date.get(d, 0),
+                    open_issues if d == today_str else None,
+                ))
+        else:
+            # No stars/forks at all (or the paginated fetch failed) -- fall
+            # back to just today's snapshot from the repo endpoint itself.
             cursor.execute("""
                 INSERT OR REPLACE INTO repo_stats (repo_name, date, stars, forks, open_issues)
                 VALUES (?, ?, ?, ?, ?)
@@ -149,10 +233,8 @@ def fetch_and_store(conn):
                 repo, today_str,
                 repo_data.get('stargazers_count', 0),
                 repo_data.get('forks_count', 0),
-                repo_data.get('open_issues_count', 0),
+                open_issues,
             ))
-        else:
-            logging.error(f"Failed to fetch repo stats for {repo}: {resp_repo.status_code} - {resp_repo.text}")
 
         # 1. Traffic Views
         url_views = f"https://api.github.com/repos/{repo}/traffic/views"

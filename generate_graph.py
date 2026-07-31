@@ -447,17 +447,28 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
     fig, (ax_human, ax_ci) = plt.subplots(1, 2, figsize=(15, 6))
 
     # --- Left: Human Discovery ---
+    # NOTE on labeling: stars/forks are genuinely cumulative (reconstructed
+    # from each star's/fork's own timestamp -- see scraper.py's
+    # _cumulative_by_date, a valid use of cumulative math since each star/fork
+    # is a single non-repeatable action). Cloners/views are daily counts, NOT
+    # a rolling 14-day window despite the old label implying that -- GitHub's
+    # traffic API returns one entry per calendar day, it just only exposes
+    # the trailing 14 days of them. They're deliberately NOT cumsum'd here:
+    # summing daily "uniques" across days double-counts anyone who visited on
+    # more than one day, since GitHub's per-day uniqueness aggregate retains
+    # no cross-day identity to de-overlap against -- there's no valid way to
+    # recover a true cumulative-unique-visitor count from these aggregates.
     if not human_stars.empty:
         ax_human.plot(human_stars['date'], human_stars['stars'], color='#f1c40f', linewidth=2, marker='o',
-                       markersize=4, label='GitHub Stars')
+                       markersize=4, label='GitHub Stars (cumulative)')
         ax_human.plot(human_stars['date'], human_stars['forks'], color='#e67e22', linewidth=2, marker='o',
-                       markersize=4, label='GitHub Forks')
+                       markersize=4, label='GitHub Forks (cumulative)')
     if not human_clones.empty:
         ax_human.plot(human_clones['date'], human_clones['unique_cloners'], color='#1f77b4', linewidth=2,
-                       marker='o', markersize=4, label='Unique Cloners (14d)')
+                       marker='o', markersize=4, label='Unique Cloners (daily)')
     if not human_views.empty:
         ax_human.plot(human_views['date'], human_views['unique_visitors'], color='#4682B4', linewidth=1.5,
-                       linestyle='--', marker='o', markersize=4, label='Unique Profile Views (14d)')
+                       linestyle='--', marker='o', markersize=4, label='Unique Profile Views (daily)')
 
     # No emoji in titles: matplotlib's default DejaVu Sans font has no emoji
     # glyphs, so they'd render as empty tofu boxes on the CI runner that
