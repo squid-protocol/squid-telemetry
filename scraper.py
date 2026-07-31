@@ -96,6 +96,34 @@ def init_db(conn):
             UNIQUE(repo_name, date)
         )
     """)
+
+    # Human-discovery signal: GitHub's own repo-level counters. Unlike clones/views
+    # (14-day rolling windows), these are point-in-time snapshots, so we store one
+    # row per day and let the graph layer read them as a simple time series.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS repo_stats (
+            repo_name TEXT,
+            date TEXT,
+            stars INTEGER,
+            forks INTEGER,
+            open_issues INTEGER,
+            UNIQUE(repo_name, date)
+        )
+    """)
+
+    # Production-integration signal: how many distinct external repos reference
+    # gitgalaxy's GitHub Action (`uses: squid-protocol/gitgalaxy`) in a workflow
+    # file. There's no GitHub Marketplace listing for this action, so code search
+    # is the only passive way to observe adoption -- see fetch_and_store() for
+    # the query and its known limitations.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS action_adoption (
+            date TEXT,
+            matching_files INTEGER,
+            unique_repos INTEGER,
+            UNIQUE(date)
+        )
+    """)
     conn.commit()
 
 def fetch_and_store(conn):
@@ -105,7 +133,27 @@ def fetch_and_store(conn):
 
     for repo in TARGET_REPOS:
         logging.info(f"Scraping telemetry for {repo}...")
-        
+
+        # 0. Repo Stats (Stars/Forks/Open Issues) -- human-discovery signal.
+        # Unlike traffic/clones/views, this is a plain point-in-time snapshot
+        # (no rolling window), and public/unauthenticated, but we still send
+        # HEADERS to get the higher authenticated rate limit.
+        url_repo = f"https://api.github.com/repos/{repo}"
+        resp_repo = requests.get(url_repo, headers=HEADERS)
+        if resp_repo.status_code == 200:
+            repo_data = resp_repo.json()
+            cursor.execute("""
+                INSERT OR REPLACE INTO repo_stats (repo_name, date, stars, forks, open_issues)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                repo, today_str,
+                repo_data.get('stargazers_count', 0),
+                repo_data.get('forks_count', 0),
+                repo_data.get('open_issues_count', 0),
+            ))
+        else:
+            logging.error(f"Failed to fetch repo stats for {repo}: {resp_repo.status_code} - {resp_repo.text}")
+
         # 1. Traffic Views
         url_views = f"https://api.github.com/repos/{repo}/traffic/views"
         resp_views = requests.get(url_views, headers=HEADERS)
@@ -175,7 +223,15 @@ def fetch_and_store(conn):
             logging.error(f"Failed to fetch PyPI stats for {package_name}: {resp_pypi.status_code} - {resp_pypi.text}")
 
         # 6. GitLab CI/CD Catalog Usage (GraphQL)
-        if repo == "squid-protocol/gitgalaxy" and GITLAB_PAT:
+        # BUG FIX: this used to also require `GITLAB_PAT` before even attempting the
+        # fetch, but ciCatalogResource is a public query for a public catalog resource
+        # -- confirmed working with zero auth via a bare curl. That guard silently
+        # skipped this entire block (no error logged) whenever the PAT secret was
+        # unset/expired, which is exactly what happened: gitlab_catalog_usage had
+        # ZERO rows despite this code existing. Still send the PAT when present
+        # (GITLAB_HEADERS already handles that), since it likely raises the rate
+        # limit, but don't require it.
+        if repo == "squid-protocol/gitgalaxy":
             gitlab_path = "squid-protocol1/gitgalaxy"
             query = """
             query getCiCatalogResourceComponents($fullPath: ID!) {
@@ -204,9 +260,49 @@ def fetch_and_store(conn):
 
     conn.commit()
     logging.info("Telemetry successfully committed to SQLite.")
-    
+
+def fetch_action_adoption(conn):
+    """
+    Production-integration signal for the GitHub Action: gitgalaxy isn't listed
+    on the GitHub Marketplace, so there's no install count to read. Code search
+    for `uses: squid-protocol/gitgalaxy` in workflow files is the only passive
+    way to observe how many external repos have wired it into CI.
+
+    Known limitations (documented, not solved -- see squid-telemetry's README):
+    - Only searches each matching repo's default branch, and only indexes
+      files under 384 KB (irrelevant here, workflow files are tiny).
+    - The search term is the bare "owner/repo" string scoped to
+      `.github/workflows`, not a strict `uses:`-prefixed match -- GitHub's code
+      search tokenizes on punctuation, so an exact `uses: X` phrase match isn't
+      reliable. This slightly over-counts (would match a comment mentioning the
+      string) but is a reasonable proxy; `matching_files` (raw) and
+      `unique_repos` (deduped by repository) are both stored so a future pass
+      can tighten the query without losing the raw signal.
+    - Capped at the API's first page (100 results) -- fine at gitgalaxy's
+      current adoption scale; revisit with pagination if it's ever maxed out.
+    """
+    cursor = conn.cursor()
+    today_str = datetime.now().strftime('%Y-%m-%d')
+
+    url_search = "https://api.github.com/search/code"
+    params = {"q": '"squid-protocol/gitgalaxy" path:.github/workflows', "per_page": 100}
+    resp = requests.get(url_search, headers=HEADERS, params=params)
+
+    if resp.status_code == 200:
+        data = resp.json()
+        items = data.get("items", [])
+        unique_repos = len({item["repository"]["full_name"] for item in items})
+        cursor.execute("""
+            INSERT OR REPLACE INTO action_adoption (date, matching_files, unique_repos)
+            VALUES (?, ?, ?)
+        """, (today_str, data.get("total_count", len(items)), unique_repos))
+        conn.commit()
+    else:
+        logging.error(f"Failed to fetch Action adoption: {resp.status_code} - {resp.text}")
+
 if __name__ == "__main__":
     conn = sqlite3.connect(DB_NAME)
     init_db(conn)
     fetch_and_store(conn)
+    fetch_action_adoption(conn)
     conn.close()
