@@ -152,7 +152,7 @@ def generate_conversion_funnel(db_path: str, output_path: str):
         downloads AS (
             SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
-            SELECT date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            SELECT date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
             SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
         ),
@@ -176,12 +176,14 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Render both datasets as lines with identical thicknesses
-    # NOTE: "downloads" here is a combined volume (GitHub unique clones + PyPI
+    # Render both datasets as plain lines (no point markers -- the per-point
+    # numeric labels below already mark each value, a redundant dot on top
+    # just adds clutter).
+    # NOTE: "downloads" here is a combined volume (GitHub clone events + PyPI
     # download events + GitLab unique-project usage), not a uniformly
     # deduplicated count -- see generate_cumulative_graph()'s own note.
-    ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, marker='o', label='Unique Profile Views (Intent)')
-    ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, marker='o', label='Combined Fetch Volume (Execution)')
+    ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, label='Unique Profile Views (Intent)')
+    ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, label='Combined Fetch Volume (Execution)')
     
     # Calculate offset for labels based on the max value in the graph
     y_offset = df[['views', 'downloads']].max().max() * 0.02
@@ -195,9 +197,12 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     ax.set_title("GitGalaxy Conversion Funnel (14-Day Rolling)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Count", fontsize=12, labelpad=10)
-    
+
     import matplotlib.dates as mdates
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    # BUG FIX: '%Y-%m' (month-only) on a 14-day window means every single tick
+    # renders as the same "2026-07" label -- useless for a chart whose whole
+    # point is showing day-to-day movement. Day-level format instead.
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
     plt.xticks(rotation=45)
     
     ax.legend(loc='upper left')
@@ -227,19 +232,34 @@ def generate_discovery_engine(db_path: str, output_path: str):
     pivot_df = df.pivot(index='date_dt', columns='site', values='unique_visitors').fillna(0)
     
     # Filter to top 5 performing channels to keep the graph readable
-    top_sites = pivot_df.sum().nlargest(5).index
+    top_sites = pivot_df.sum().nlargest(5).index.tolist()
+
+    # PINNED_CHANNELS: always shown regardless of raw-volume rank, because
+    # they answer a DIFFERENT question than "which referrer sends the most
+    # traffic" -- github-help-wanted.com is GitHub's own contributor-
+    # recruitment surface (its "help wanted" listings), so it's a signal for
+    # "are we attracting potential CONTRIBUTORS specifically", not general
+    # discovery volume. Currently ~15 unique visitors total -- real, but
+    # below the top-5-by-volume cutoff (Bing/Google/reddit dominate by raw
+    # count), so it would otherwise never appear here at all.
+    PINNED_CHANNELS = ['github-help-wanted.com']
+    for channel in PINNED_CHANNELS:
+        if channel in pivot_df.columns and channel not in top_sites:
+            top_sites.append(channel)
     pivot_df = pivot_df[top_sites]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     for site in pivot_df.columns:
-        ax.plot(pivot_df.index, pivot_df[site], linewidth=2, marker='o', label=site)
-        
+        ax.plot(pivot_df.index, pivot_df[site], linewidth=2, label=site)
+
     ax.set_title("Top Discovery Channels (14-Day Rolling Timeline)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
-    
+
     import matplotlib.dates as mdates
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    # Day-level format -- see conversion_funnel's identical fix above;
+    # month-only was unreadable on a 14-day window.
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
     plt.xticks(rotation=45)
     
     # Push legend outside the plot to avoid overlapping the data lines
@@ -275,24 +295,38 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     df['clean_path'] = df['path'].apply(lambda x: x.replace('/squid-protocol/gitgalaxy/tree/main/', '')
                                                   .replace('/squid-protocol/gitgalaxy/blob/main/', '')
                                                   .replace('/squid-protocol/gitgalaxy', '/ (Root)'))
-                                                  
+
+    # BUG FIX: a deep file path (e.g.
+    # "gitgalaxy/tools/terabyte_log_scanning/terabyte_log_scanner.py") was
+    # still the FULL relative path after the repo-prefix strip above -- long
+    # enough to blow out the legend's width on its own. Collapse anything
+    # with more than 2 path segments down to just "parent-dir/filename",
+    # prefixed with an ellipsis so it still reads as "somewhere deeper", not
+    # like the whole path.
+    def _shorten_path(p):
+        parts = p.strip('/').split('/')
+        return p if len(parts) <= 2 else '.../' + '/'.join(parts[-2:])
+    df['clean_path'] = df['clean_path'].apply(_shorten_path)
+
     df['date_dt'] = pd.to_datetime(df['date'])
     pivot_df = df.pivot(index='date_dt', columns='clean_path', values='unique_visitors').fillna(0)
-    
+
     # Filter to top 5 paths to keep the graph readable
     top_paths = pivot_df.sum().nlargest(5).index
     pivot_df = pivot_df[top_paths]
-    
+
     fig, ax = plt.subplots(figsize=(10, 6))
     for path in pivot_df.columns:
-        ax.plot(pivot_df.index, pivot_df[path], linewidth=2, marker='o', label=path)
-        
+        ax.plot(pivot_df.index, pivot_df[path], linewidth=2, label=path)
+
     ax.set_title("Feature Intent Patterns (14-Day Rolling Timeline)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
     ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
-    
+
     import matplotlib.dates as mdates
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    # Day-level format -- see conversion_funnel's identical fix above;
+    # month-only was unreadable on a 14-day window.
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
     plt.xticks(rotation=45)
     
     ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
@@ -325,10 +359,31 @@ def generate_release_correlation(db_path: str, output_path: str):
     releases = {}
     def version_tuple(v):
         return [int(x) if x.isdigit() else x for x in v.split('.')]
-        
+
     for date_str, v_list in daily_versions.items():
         v_list.sort(key=version_tuple)
         releases[date_str] = f"v{v_list[-1]}"
+
+    # 2b. BUG FIX: step 2 only condensed releases landing on the SAME day --
+    # but active patch cadences ship a new version every day or two (e.g.
+    # v2.3.9, v2.3.12, v2.3.17, v2.3.20 within one week), each on a
+    # DIFFERENT day, so each still got its own vertical line + rotated text
+    # label, and those labels overlapped into an unreadable pile (confirmed
+    # by rendering it). Collapse any run of releases within CLUSTER_DAYS of
+    # the cluster's start into ONE label, shown at the cluster's last date
+    # with the latest version reached -- still shows the real release
+    # cadence, just not every single patch tick.
+    CLUSTER_DAYS = 3
+    sorted_release_dates = sorted(releases.keys(), key=pd.to_datetime)
+    clustered_releases = {}
+    cluster_start = cluster_last_date = None
+    for date_str in sorted_release_dates:
+        dt = pd.to_datetime(date_str)
+        if cluster_start is None or (dt - cluster_start).days > CLUSTER_DAYS:
+            cluster_start = dt
+        cluster_last_date = date_str
+        clustered_releases[cluster_start] = (date_str, releases[date_str])
+    releases = {date_str: version for date_str, version in clustered_releases.values()}
 
     # 3. Query the aggregated daily fetches across all sources
     conn = sqlite3.connect(db_path)
@@ -336,7 +391,7 @@ def generate_release_correlation(db_path: str, output_path: str):
         WITH combined_traffic AS (
             SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
-            SELECT date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            SELECT date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
             SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
         )
@@ -390,8 +445,11 @@ def generate_release_correlation(db_path: str, output_path: str):
     
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     plt.xticks(rotation=45)
-    
-    ax.legend(loc='upper left')
+
+    # lower right, not upper left: the early release cluster's labels sit at
+    # the top of the chart (near x-axis start), directly under where an
+    # upper-left legend box would land -- confirmed by rendering it.
+    ax.legend(loc='lower right')
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(True, linestyle=':', alpha=0.4)
