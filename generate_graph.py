@@ -447,6 +447,12 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         date_max += pd.Timedelta(days=7)
 
     import matplotlib.dates as mdates
+    from matplotlib.ticker import MaxNLocator
+
+    # Font sizes bumped substantially across the board (title/axis/tick/legend)
+    # per explicit request -- small multi-panel text was hard to read at the
+    # size this normally renders at in a README.
+    TITLE_FS, AXIS_FS, TICK_FS, LEGEND_FS, SUPTITLE_FS = 18, 15, 13, 14, 22
 
     def _plot_series(ax, df, y_col, **kwargs):
         """
@@ -459,17 +465,39 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
             return
         if len(df) == 1:
             kwargs.pop('linestyle', None)
-            ax.plot(df['date'], df[y_col], marker='o', markersize=6, linestyle='', **kwargs)
+            ax.plot(df['date'], df[y_col], marker='o', markersize=8, linestyle='', **kwargs)
         else:
             ax.plot(df['date'], df[y_col], **kwargs)
 
+    def _anchor_zero_at(df, anchor_date):
+        """
+        If a series' own history starts after `anchor_date`, prepend a
+        synthetic (anchor_date, 0-for-every-non-date-column) row so a lone,
+        context-free point (e.g. "1 repo using the Action, as of today") can
+        render as an actual line instead of a dot with no story. This is a
+        MODELING ASSUMPTION -- the metric was presumably 0 before gitgalaxy
+        existed / before we started tracking it, not something we actually
+        measured back then -- documented here and in the README caption, not
+        hidden. Only applied to the two Production/CI series: stars/forks and
+        traffic already have their own real starting points (see the "not
+        yet tracked" gray segment below for traffic's gap instead).
+        """
+        if df.empty or df['date'].min() <= anchor_date:
+            return df
+        anchor_row = {col: (anchor_date if col == 'date' else 0) for col in df.columns}
+        return pd.concat([pd.DataFrame([anchor_row]), df], ignore_index=True)
+
+    ci_gitlab = _anchor_zero_at(ci_gitlab, date_min)
+    ci_action = _anchor_zero_at(ci_action, date_min)
+
     # Matplotlib's built-in seaborn-derived stylesheet -- gives the clean
-    # whitegrid look without adding an actual seaborn dependency to the
-    # pipeline's `pip install requests pandas matplotlib` step. Scoped to
+    # seaborn look without adding an actual seaborn dependency to the
+    # pipeline's `pip install requests pandas matplotlib` step. "-white" (not
+    # "-whitegrid"): no background gridlines, per explicit request. Scoped to
     # just this figure via the context manager so it doesn't change the
     # other 5 charts' existing look.
-    with plt.style.context('seaborn-v0_8-whitegrid'):
-        fig, (ax_stars, ax_traffic, ax_ci) = plt.subplots(1, 3, figsize=(20, 6))
+    with plt.style.context('seaborn-v0_8-white'):
+        fig, (ax_stars, ax_traffic, ax_ci) = plt.subplots(1, 3, figsize=(22, 7))
 
         # --- Panel 1: Stars & Forks ---
         # Genuinely cumulative (reconstructed from each star's/fork's own
@@ -478,9 +506,7 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # action, unlike cloners/views below).
         _plot_series(ax_stars, human_stars, 'stars', color='#f1c40f', linewidth=2.5, label='GitHub Stars')
         _plot_series(ax_stars, human_stars, 'forks', color='#e67e22', linewidth=2.5, label='GitHub Forks')
-        ax_stars.set_title("Stars & Forks (cumulative)", fontsize=14, fontweight='bold')
-        ax_stars.set_ylabel("Count", fontsize=11)
-        ax_stars.legend(loc='upper left', fontsize=9)
+        ax_stars.set_title("Stars & Forks", fontsize=TITLE_FS, fontweight='bold')
 
         # --- Panel 2: Repository Traffic ---
         # Daily counts, NOT a rolling 14-day window despite the old chart's
@@ -491,21 +517,26 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # GitHub's per-day uniqueness aggregate retains no cross-day identity
         # to de-overlap against -- there's no valid way to recover a true
         # cumulative-unique-visitor count from these aggregates.
+        #
+        # The flat gray segment marks the period before clones/views tracking
+        # existed at all -- without it, this panel just has a big, unexplained
+        # blank gap before the real lines start, which reads as broken rather
+        # than "not tracked yet".
+        traffic_dates = pd.concat([df['date'] for df in (human_clones, human_views) if not df.empty])
+        if not traffic_dates.empty and traffic_dates.min() > date_min:
+            ax_traffic.plot([date_min, traffic_dates.min()], [0, 0], color='#999999', linewidth=2,
+                            label='Not yet tracked', zorder=1)
         _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#1f77b4', linewidth=2, label='Unique Cloners')
         _plot_series(ax_traffic, human_views, 'unique_visitors', color='#4682B4', linewidth=1.5, linestyle='--',
                      label='Unique Profile Views')
-        ax_traffic.set_title("Repository Traffic (daily)", fontsize=14, fontweight='bold')
-        ax_traffic.set_ylabel("Count", fontsize=11)
-        ax_traffic.legend(loc='upper left', fontsize=9)
+        ax_traffic.set_title("Repository Traffic", fontsize=TITLE_FS, fontweight='bold')
 
         # --- Panel 3: Production / CI Integration ---
         _plot_series(ax_ci, ci_gitlab, 'usage_count_30_days', color='#9467bd', linewidth=2.5,
                      label='GitLab CI/CD Catalog\n(unique projects, 30d)')
         _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=2.5,
                      label='GitHub Action\n(unique repos, code search)')
-        ax_ci.set_title("Production / CI Integration", fontsize=14, fontweight='bold')
-        ax_ci.set_ylabel("Count", fontsize=11)
-        ax_ci.legend(loc='upper left', fontsize=9)
+        ax_ci.set_title("Production / CI Integration", fontsize=TITLE_FS, fontweight='bold')
 
         # No emoji anywhere in this figure: matplotlib's default DejaVu Sans
         # font has no emoji glyphs, so they'd render as empty tofu boxes on
@@ -513,13 +544,24 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         # Emoji are fine in the README's own markdown heading around the
         # embedded image, just not baked into the raster PNG itself.
         for ax in (ax_stars, ax_traffic, ax_ci):
-            ax.set_xlabel("Date", fontsize=11)
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax.set_xlabel("Date", fontsize=AXIS_FS)
+            ax.set_ylabel("Count", fontsize=AXIS_FS)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%y'))
+            # Cap both axes at ~4 ticks -- more legible at the bumped font
+            # sizes, and less cluttered than a tick per week/every-few-units.
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=4))
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+            ax.tick_params(axis='both', labelsize=TICK_FS)
             ax.tick_params(axis='x', rotation=45)
+            ax.grid(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
             ax.set_ylim(bottom=0)
             ax.set_xlim(date_min, date_max)
+            ax.legend(loc='upper left', fontsize=LEGEND_FS, framealpha=0.9)
 
-        fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=16, fontweight='bold', y=1.02)
+        fig.suptitle("GitGalaxy: Human Discovery vs. Production Integration", fontsize=SUPTITLE_FS,
+                     fontweight='bold', y=1.03)
         plt.tight_layout()
         plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
