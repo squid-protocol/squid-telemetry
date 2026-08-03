@@ -4,6 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import requests
 
+CUTOFF_DATE = pd.Timestamp.now().normalize() - pd.Timedelta(days=3)
+
 def generate_cumulative_graph(db_path: str, output_path: str):
     # 1. Connect to the database and extract the daily totals
     conn = sqlite3.connect(db_path)
@@ -61,11 +63,12 @@ def generate_cumulative_graph(db_path: str, output_path: str):
         return
 
     df['date'] = pd.to_datetime(df['date'])
+    df = df[df['date'] <= CUTOFF_DATE]
     
     # Pivot the data without filling NaN with 0. 
     # This ensures pandas .cumsum() naturally starts drawing each line 
     # exactly at its respective first date of collected data.
-    pivot_df = df.pivot(index='date', columns='repo_name', values='daily_downloads')
+    pivot_df = df.pivot(index='date', columns='repo_name', values='daily_downloads').fillna(0)
     
     # Calculate cumulative sum for all series
     cumulative_df = pivot_df.cumsum()
@@ -211,6 +214,8 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     
     df = df.sort_values('date') 
     df['date_dt'] = pd.to_datetime(df['date'])
+    
+    df = df[df['date_dt'] <= CUTOFF_DATE]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
@@ -481,6 +486,8 @@ def generate_release_correlation(db_path: str, output_path: str):
 
     # 4. Process data and calculate cumulative sum
     df['date_dt'] = pd.to_datetime(df['date'])
+    df = df[df['date_dt'] <= CUTOFF_DATE]
+        
     df['cumulative_downloads'] = df['daily_downloads'].cumsum()
     
     # 5. Render the graph
@@ -574,10 +581,19 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         print("No human-vs-CI adoption data found in the database yet.")
         return
 
+
+    # Process and truncate all frames to safe_max so no lines stick out further than others
+    processed_frames = []
     for df in all_frames:
         if not df.empty:
             df['date'] = pd.to_datetime(df['date'])
-
+            df = df[df['date'] <= CUTOFF_DATE]
+            processed_frames.append(df)
+            
+    # Unpack the processed frames back to their variables
+    if processed_frames:
+        human_stars, human_clones, human_views, ci_gitlab, ci_action = processed_frames
+    
     # The CI panel's two series (GitLab Catalog, Action adoption) are both
     # brand-new collections that may only have a handful of points -- with no
     # multi-point line to anchor a real range, matplotlib's autoscale can pick
