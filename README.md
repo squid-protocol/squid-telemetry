@@ -63,3 +63,19 @@ This repository is completely self-contained and runs on an automated daily CRON
 2. **The Database (`traffic_metrics.db`):** The raw JSON responses are normalized and safely upserted into a highly relational SQLite database.
 3. **The Visualizer (`generate_graph.py`):** Pandas and Matplotlib query the SQLite database to calculate rolling windows and cumulative totals, rendering the time-series data into clean, professional PNG artifacts. (`release_correlation.py` at the repo root is an earlier, standalone iteration of this file's release-correlation chart, kept for reference — it isn't invoked by the pipeline.)
 4. **The Commit (`telemetry_pipeline.yml`):** The CI/CD runner automatically commits the updated database and new image artifacts back to this repository, ensuring the dashboard remains perfectly synchronized without manual intervention.
+---
+
+## The GitGalaxy constellation
+
+This repo is one strand of the web of repos that build, prove, and showcase
+[GitGalaxy](https://github.com/squid-protocol/gitgalaxy). This one tracks how the engine
+**spreads** (fetches, views, referrers); the runtime evidence for what it *does* lives next door:
+
+- [gitgalaxy](https://github.com/squid-protocol/gitgalaxy) — the engine these metrics track
+- **squid-telemetry** — *you are here*: public distribution/adoption analytics (the engine itself is air-gapped and phones nothing home)
+- [gitgalaxy-raw-output](https://github.com/squid-protocol/gitgalaxy-raw-output) — unedited scan outputs + speed telemetry on hundreds of real repos
+- [language-crucible](https://github.com/squid-protocol/language-crucible) — the pinned adversarial corpus behind the engine's golden-master regression gate
+- [keyword-rosetta](https://github.com/squid-protocol/keyword-rosetta) — one planted program in 46 languages, measuring cross-language measurement consistency
+- [gitgalaxy-population-analyses](https://github.com/squid-protocol/gitgalaxy-population-analyses) — statistical analyses over the scan population
+- [cobol_to_java_examples](https://github.com/squid-protocol/cobol_to_java_examples) — 10 COBOL repos auto-translated to compiling Spring Boot architectures
+- Docs: [architecture & methodology site](https://squid-protocol.github.io/gitgalaxy/) · [Museum of Code](https://squid-protocol.github.io/gitgalaxy/museum-of-code/) · [gitgalaxy.io](https://gitgalaxy.io/) · [PyPI](https://pypi.org/project/gitgalaxy/) · [demo video](https://www.youtube.com/watch?v=XWWSd8LmoCM)
