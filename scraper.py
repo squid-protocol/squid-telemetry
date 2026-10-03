@@ -531,7 +531,9 @@ if __name__ == "__main__":
     fetch_and_store(conn)
     fetch_action_adoption(conn)
     try:
-        fetch_own_ci_estimate(conn)
+        # Default refreshes the last 3 days; a manual run can backfill history
+        # (workflow_dispatch input own_ci_backfill_days, e.g. 102 for the full table).
+        fetch_own_ci_estimate(conn, since_days=int(os.environ.get("OWN_CI_BACKFILL_DAYS") or 3))
     except Exception as e:  # estimate is best-effort; never fail the pipeline
         logging.warning(f"Own-CI estimate failed: {e}")
     conn.close()
