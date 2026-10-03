@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests
+from aggregation import all_time_window_totals
 
 CUTOFF_DATE = pd.Timestamp.now().normalize() - pd.Timedelta(days=3)
 
@@ -225,7 +226,7 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     # NOTE: "downloads" here is a combined volume (GitHub clone events + PyPI
     # download events + GitLab unique-project usage), not a uniformly
     # deduplicated count -- see generate_cumulative_graph()'s own note.
-    ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, label='Unique Profile Views (Intent)')
+    ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, label='Unique Visitors per Day (Intent)')
     ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, label='Combined Fetch Volume (Execution)')
 
     # Numeric labels only on the downloads line's real statistical peaks --
@@ -236,7 +237,7 @@ def generate_conversion_funnel(db_path: str, output_path: str):
     
     ax.set_title("GitGalaxy Conversion Funnel (All-Time)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Count", fontsize=12, labelpad=10)
+    ax.set_ylabel("Per-day count (visitors / fetch events; incl. own CI)", fontsize=12, labelpad=10)
 
     import matplotlib.dates as mdates
     # Day-level format (not '%Y-%m' -- month-only was unreadable on the old
@@ -292,10 +293,9 @@ def generate_discovery_engine(db_path: str, output_path: str):
     # own table holds more history than a single API call would, and there's
     # no reason to throw that away when rendering.
     query = """
-        SELECT fetch_date as date, site, SUM(unique_visitors) as unique_visitors
+        SELECT fetch_date as date, site, unique_visitors, total_views
         FROM referring_sites
         WHERE repo_name = 'squid-protocol/gitgalaxy'
-        GROUP BY date, site
         ORDER BY date ASC;
     """
     df = pd.read_sql_query(query, conn)
@@ -303,11 +303,18 @@ def generate_discovery_engine(db_path: str, output_path: str):
     
     if df.empty: return
     
+    # BUG FIX: every row is GitHub's trailing-14-DAY total as of its fetch date, so
+    # summing rows across fetch dates counted each visitor up to ~14x. Rank channels
+    # by the sum over non-overlapping 14-day snapshots only ("visitor-windows": the
+    # same person in two windows is still counted twice -- no identity to dedupe).
+    window_totals = all_time_window_totals(df.rename(columns={'date': 'fetch_date'}), 'site')
+    window_totals = window_totals.set_index('site')['unique_visitors']
+
     df['date_dt'] = pd.to_datetime(df['date'])
     pivot_df = df.pivot(index='date_dt', columns='site', values='unique_visitors').fillna(0)
     
     # Filter to top 5 performing channels to keep the graph readable
-    top_sites = pivot_df.sum().nlargest(5).index.tolist()
+    top_sites = window_totals.nlargest(5).index.tolist()
 
     # PINNED_CHANNELS: always shown regardless of raw-volume rank, because
     # they answer a DIFFERENT question than "which referrer sends the most
@@ -322,6 +329,9 @@ def generate_discovery_engine(db_path: str, output_path: str):
         if channel in pivot_df.columns and channel not in top_sites:
             top_sites.append(channel)
     pivot_df = pivot_df[top_sites]
+    # Series are each day's trailing-14-day value; the label carries the all-time
+    # visitor-window total (non-overlapping windows) that decided the ranking.
+    pivot_df.columns = [f"{c} (all-time: {int(window_totals.get(c, 0))} visitor-windows)" for c in pivot_df.columns]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     colors = {}
@@ -329,9 +339,9 @@ def generate_discovery_engine(db_path: str, output_path: str):
         line, = ax.plot(pivot_df.index, pivot_df[site], linewidth=2, label=site)
         colors[site] = line.get_color()
 
-    ax.set_title("Top Discovery Channels (All-Time)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("Top Discovery Channels (ranked all-time; plotted as trailing 14 days)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
+    ax.set_ylabel("Unique visitors in trailing 14 days", fontsize=12, labelpad=10)
 
     import matplotlib.dates as mdates
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
@@ -351,7 +361,7 @@ def generate_feature_heatmap(db_path: str, output_path: str):
     # All-time data -- see generate_discovery_engine's identical comment
     # above; our table holds more history than GitHub's 14-day API window.
     query = """
-        SELECT fetch_date as date, path, SUM(unique_visitors) as unique_visitors
+        SELECT fetch_date as date, path, unique_visitors, total_views
         FROM popular_content
         WHERE repo_name = 'squid-protocol/gitgalaxy'
           AND path NOT LIKE '%/issues%'
@@ -360,7 +370,6 @@ def generate_feature_heatmap(db_path: str, output_path: str):
           AND path NOT LIKE '%/graphs%'
           AND path NOT LIKE '%/milestone%'
           AND path != '/squid-protocol/gitgalaxy'
-        GROUP BY date, path
         ORDER BY date ASC;
     """
     df = pd.read_sql_query(query, conn)
@@ -385,12 +394,21 @@ def generate_feature_heatmap(db_path: str, output_path: str):
         return p if len(parts) <= 1 else '.../' + parts[-1]
     df['clean_path'] = df['clean_path'].apply(_shorten_path)
 
+    # Rows are trailing-14-day snapshots: rank on non-overlapping windows only (see
+    # generate_discovery_engine). clean_path can merge several raw paths, so sum
+    # per (fetch_date, clean_path) first.
+    per_day = df.groupby(['date', 'clean_path'], as_index=False)[['unique_visitors', 'total_views']].sum()
+    window_totals = all_time_window_totals(per_day.rename(columns={'date': 'fetch_date'}), 'clean_path')
+    window_totals = window_totals.set_index('clean_path')['unique_visitors']
+
+    df = per_day
     df['date_dt'] = pd.to_datetime(df['date'])
     pivot_df = df.pivot(index='date_dt', columns='clean_path', values='unique_visitors').fillna(0)
 
     # Filter to top 5 paths to keep the graph readable
-    top_paths = pivot_df.sum().nlargest(5).index
+    top_paths = window_totals.nlargest(5).index
     pivot_df = pivot_df[top_paths]
+    pivot_df.columns = [f"{c} (all-time: {int(window_totals.get(c, 0))} visitor-windows)" for c in pivot_df.columns]
 
     fig, ax = plt.subplots(figsize=(10, 6))
     colors = {}
@@ -398,9 +416,9 @@ def generate_feature_heatmap(db_path: str, output_path: str):
         line, = ax.plot(pivot_df.index, pivot_df[path], linewidth=2, label=path)
         colors[path] = line.get_color()
 
-    ax.set_title("Feature Intent Patterns (All-Time)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("Feature Intent (ranked all-time; plotted as trailing 14 days)", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Unique Visitors", fontsize=12, labelpad=10)
+    ax.set_ylabel("Unique visitors in trailing 14 days", fontsize=12, labelpad=10)
 
     import matplotlib.dates as mdates
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
@@ -709,9 +727,9 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         traffic_dates = pd.concat([df['date'] for df in (human_clones, human_views) if not df.empty])
         if not traffic_dates.empty and traffic_dates.min() > date_min:
             ax_traffic.plot([date_min, traffic_dates.min()], [0, 0], color='#999999', linewidth=2, zorder=1)
-        _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#1f77b4', linewidth=2, label='Unique Cloners')
+        _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#1f77b4', linewidth=2, label='Unique Cloners per Day')
         _plot_series(ax_traffic, human_views, 'unique_visitors', color='#4682B4', linewidth=1.5, linestyle='--',
-                     label='Unique Profile Views')
+                     label='Unique Visitors per Day')
         ax_traffic.set_title("Repository Traffic", fontsize=TITLE_FS, fontweight='bold')
 
         # --- Panel 3: Production / CI Integration ---
@@ -751,6 +769,8 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
             ax.set_xlim(date_min, date_max)
             ax.legend(loc='upper left', framealpha=0.9, prop={'size': LEGEND_FS, 'weight': 'bold'})
 
+        ax_traffic.set_ylabel("Unique per day", fontsize=AXIS_FS, fontweight='bold')
+
         # Simpler, plain-language title -- "Human Discovery vs. Production
         # Integration" reads like an internal analytics label, not something
         # a general reader parses at a glance.
@@ -758,6 +778,48 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
                      fontweight='bold', y=1.03)
         plt.tight_layout()
         plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
+def generate_clones_self_traffic(db_path: str, output_path: str):
+    """Daily total clone events on gitgalaxy vs. an ESTIMATE of those caused by
+    squid-protocol's own CI (own_ci_clones table: runs x static checkout count).
+    Shown as a separate series, never subtracted from the GitHub numbers."""
+    conn = sqlite3.connect(db_path)
+    clones = pd.read_sql_query(
+        "SELECT date, total_clones FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date", conn)
+    try:
+        own = pd.read_sql_query("SELECT date, SUM(est_clones) AS est_clones FROM own_ci_clones GROUP BY date ORDER BY date", conn)
+    except Exception:  # table not created yet
+        own = pd.DataFrame(columns=['date', 'est_clones'])
+    conn.close()
+    if clones.empty:
+        return
+    clones['date'] = pd.to_datetime(clones['date'])
+    clones = clones[clones['date'] <= CUTOFF_DATE]
+    own['date'] = pd.to_datetime(own['date'])
+    own = own[own['date'].between(clones['date'].min(), clones['date'].max())]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(clones['date'], clones['total_clones'], color='#00008B', linewidth=2, label='Total clones per day (GitHub)')
+    if not own.empty:
+        ax.plot(own['date'], own['est_clones'], color='#d62728', linewidth=2, linestyle='--',
+                label='Own CI (est.): workflow runs x engine checkouts')
+    ax.set_title("GitGalaxy Clones: Total vs. Own-CI Estimate", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date (UTC)", fontsize=12, labelpad=10)
+    ax.set_ylabel("Clone/fetch events per day", fontsize=12, labelpad=10)
+    ax.text(0.01, 0.01, "Estimate counts only squid-protocol Actions runs; excludes local/agent fetches and matrix jobs.",
+            transform=ax.transAxes, fontsize=8, color='#555555')
+    import matplotlib.dates as mdates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=12))
+    plt.xticks(rotation=45)
+    ax.set_ylim(bottom=0)
+    ax.legend(loc='upper left')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
 if __name__ == "__main__":
@@ -768,3 +830,4 @@ if __name__ == "__main__":
     generate_feature_heatmap(db, "feature_intent.png")
     generate_release_correlation(db, "release_correlation.png")
     generate_human_vs_ci_adoption(db, "human_vs_ci_adoption.png")
+    generate_clones_self_traffic(db, "clones_self_traffic.png")
