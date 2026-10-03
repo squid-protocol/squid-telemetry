@@ -36,7 +36,7 @@ def generate_release_correlation(db_path="traffic_metrics.db", output_path="rele
         WITH combined_traffic AS (
             SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
-            SELECT date, unique_cloners as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
+            SELECT date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
             UNION ALL
             SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
         )

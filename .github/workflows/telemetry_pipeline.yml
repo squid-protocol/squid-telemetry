@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *' # Runs at 00:00 UTC daily
   workflow_dispatch:    # Allows manual triggering
+    inputs:
+      own_ci_backfill_days:
+        description: "Days of own-CI clone estimate to (re)fill; 3 is the nightly default, ~102 backfills history"
+        required: false
+        default: "3"
 
 permissions:
   contents: write
@@ -29,6 +34,7 @@ jobs:
         env:
           TRAFFIC_READ_PAT: ${{ secrets.TRAFFIC_READ_PAT }}
           GITLAB_READ_PAT: ${{ secrets.GITLAB_READ_PAT }}
+          OWN_CI_BACKFILL_DAYS: ${{ github.event.inputs.own_ci_backfill_days || '3' }}
         run: python scraper.py
 
       - name: Generate Cumulative XKCD Graph
