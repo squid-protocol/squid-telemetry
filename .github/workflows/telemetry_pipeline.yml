@@ -31,6 +31,7 @@ jobs:
           pip install requests pandas matplotlib
 
       - name: Run Telemetry Scraper
+        id: scrape
         env:
           TRAFFIC_READ_PAT: ${{ secrets.TRAFFIC_READ_PAT }}
           GITLAB_READ_PAT: ${{ secrets.GITLAB_READ_PAT }}
@@ -38,9 +39,13 @@ jobs:
         run: python scraper.py
 
       - name: Generate Cumulative XKCD Graph
+        # Still render and commit whatever the scraper did collect when it exits
+        # non-zero on auth failures; the failed scrape step keeps the run red.
+        if: ${{ !cancelled() }}
         run: python generate_graph.py
 
       - name: Commit and Push Database and Graph
+        if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
