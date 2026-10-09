@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import sqlite3
 import logging
@@ -43,6 +44,20 @@ GITLAB_HEADERS = {
     "Authorization": f"Bearer {GITLAB_PAT}",
     "Content-Type": "application/json"
 } if GITLAB_PAT else {}
+
+# GitHub calls that came back 401/403 (expired/under-scoped TRAFFIC_READ_PAT).
+# Fetches still log-and-continue so partial data is stored, but __main__ exits
+# non-zero if any landed here: a dead PAT used to leave every run green for days
+# (2026-10-07..09) while no new traffic data was collected.
+AUTH_FAILURES = []
+
+def _note_auth_failure(resp, what):
+    """Records `what` if `resp` is a GitHub auth/permission failure (rate-limit 403s excluded)."""
+    if resp.status_code == 403 and (resp.headers.get("x-ratelimit-remaining") == "0"
+                                    or "rate limit" in resp.text.lower()):
+        return
+    if resp.status_code in (401, 403):
+        AUTH_FAILURES.append(f"{what}: HTTP {resp.status_code}")
 
 def init_db(conn):
     """Forges the SQLite schema if it does not exist."""
@@ -152,7 +167,9 @@ def init_db(conn):
     conn.commit()
 
 def _fetch_all_pages(url, headers, params=None):
-    """Fetches every page of a paginated GitHub REST list endpoint."""
+    """Fetches every page of a paginated GitHub REST list endpoint.
+    Returns None if any page fails, so callers can't mistake a failed fetch
+    for an empty list."""
     results = []
     page = 1
     while True:
@@ -161,7 +178,8 @@ def _fetch_all_pages(url, headers, params=None):
         resp = requests.get(url, headers=headers, params=page_params)
         if resp.status_code != 200:
             logging.error(f"Failed to fetch page {page} of {url}: {resp.status_code} - {resp.text}")
-            break
+            _note_auth_failure(resp, url)
+            return None
         batch = resp.json()
         if not batch:
             break
@@ -223,6 +241,7 @@ def fetch_and_store(conn):
         resp_repo = requests.get(url_repo, headers=HEADERS)
         if resp_repo.status_code != 200:
             logging.error(f"Failed to fetch repo stats for {repo}: {resp_repo.status_code} - {resp_repo.text}")
+            _note_auth_failure(resp_repo, f"repo stats for {repo}")
             continue
 
         repo_data = resp_repo.json()
@@ -231,10 +250,15 @@ def fetch_and_store(conn):
         star_headers = {**HEADERS, "Accept": "application/vnd.github.star+json"}
         stargazers = _fetch_all_pages(f"{url_repo}/stargazers", star_headers)
         forks = _fetch_all_pages(f"{url_repo}/forks", HEADERS, params={"sort": "oldest"})
-        star_dates = [s['starred_at'][:10] for s in stargazers if 'starred_at' in s]
-        fork_dates = [f['created_at'][:10] for f in forks if 'created_at' in f]
+        # A failed list fetch must not rebuild history: an empty stargazers list
+        # next to real forks rewrote every day's star count as 0 (2026-10-09,
+        # when the new PAT got 403 on /stargazers). Keep the old curve and only
+        # record today's snapshot below.
+        history_ok = stargazers is not None and forks is not None
+        star_dates = [s['starred_at'][:10] for s in stargazers or [] if 'starred_at' in s]
+        fork_dates = [f['created_at'][:10] for f in forks or [] if 'created_at' in f]
 
-        if star_dates or fork_dates:
+        if history_ok and (star_dates or fork_dates):
             earliest = min(star_dates + fork_dates)
             stars_by_date = _cumulative_by_date(star_dates, earliest, today_str)
             forks_by_date = _cumulative_by_date(fork_dates, earliest, today_str)
@@ -249,7 +273,7 @@ def fetch_and_store(conn):
                     open_issues if d == today_str else None,
                 ))
         else:
-            # No stars/forks at all (or the paginated fetch failed) -- fall
+            # No stars/forks at all (or a paginated fetch failed) -- fall
             # back to just today's snapshot from the repo endpoint itself.
             cursor.execute("""
                 INSERT OR REPLACE INTO repo_stats (repo_name, date, stars, forks, open_issues)
@@ -273,6 +297,7 @@ def fetch_and_store(conn):
                 """, (repo, date_str, view['count'], view['uniques']))
         else:
             logging.error(f"Failed to fetch views for {repo}: {resp_views.status_code} - {resp_views.text}")
+            _note_auth_failure(resp_views, f"views for {repo}")
 
         # 2. Traffic Clones
         url_clones = f"https://api.github.com/repos/{repo}/traffic/clones"
@@ -286,6 +311,7 @@ def fetch_and_store(conn):
                 """, (repo, date_str, clone['count'], clone['uniques']))
         else:
             logging.error(f"Failed to fetch clones for {repo}: {resp_clones.status_code} - {resp_clones.text}")
+            _note_auth_failure(resp_clones, f"clones for {repo}")
 
         # 3. Referring Sites
         url_referrers = f"https://api.github.com/repos/{repo}/traffic/popular/referrers"
@@ -298,6 +324,7 @@ def fetch_and_store(conn):
                 """, (repo, today_str, ref['referrer'], ref['count'], ref['uniques']))
         else:
             logging.error(f"Failed to fetch referrers for {repo}: {resp_refs.status_code} - {resp_refs.text}")
+            _note_auth_failure(resp_refs, f"referrers for {repo}")
 
         # 4. Popular Content (Paths)
         url_paths = f"https://api.github.com/repos/{repo}/traffic/popular/paths"
@@ -310,6 +337,7 @@ def fetch_and_store(conn):
                 """, (repo, today_str, path_data['path'], path_data['count'], path_data['uniques']))
         else:
             logging.error(f"Failed to fetch paths for {repo}: {resp_paths.status_code} - {resp_paths.text}")
+            _note_auth_failure(resp_paths, f"paths for {repo}")
 
         # 5. PyPI Downloads
         package_name = repo.split('/')[-1]
@@ -432,6 +460,7 @@ def fetch_action_adoption(conn):
         conn.commit()
     else:
         logging.error(f"Failed to fetch Action adoption: {resp.status_code} - {resp.text}")
+        _note_auth_failure(resp, "Action adoption search")
 
 def count_engine_checkouts(workflow_text, own_repo):
     """Counts `actions/checkout` steps in a workflow that fetch the engine repo:
@@ -468,6 +497,7 @@ def fetch_own_ci_estimate(conn, since_days=3, today=None):
         r = requests.get(f"https://api.github.com/repos/{full}/contents/.github/workflows", headers=HEADERS)
         if r.status_code in (401, 403):
             logging.warning(f"Own-CI estimate skipped: token cannot read {full} workflows ({r.status_code}).")
+            _note_auth_failure(r, f"own-CI workflows for {full}")
             return
         if r.status_code != 200:
             continue
@@ -492,6 +522,7 @@ def fetch_own_ci_estimate(conn, since_days=3, today=None):
                     rr = requests.get(url, headers=HEADERS,
                                       params={"created": day, "per_page": 100, "page": page})
                     if rr.status_code in (401, 403):
+                        _note_auth_failure(rr, f"own-CI Actions runs for {full}")
                         raise PermissionError(rr.status_code)
                     if rr.status_code != 200:
                         return True
@@ -537,3 +568,9 @@ if __name__ == "__main__":
     except Exception as e:  # estimate is best-effort; never fail the pipeline
         logging.warning(f"Own-CI estimate failed: {e}")
     conn.close()
+    if AUTH_FAILURES:
+        logging.error(f"{len(AUTH_FAILURES)} GitHub call(s) were rejected for auth/permissions "
+                      "-- renew or re-scope TRAFFIC_READ_PAT:")
+        for failure in AUTH_FAILURES:
+            logging.error(f"  {failure}")
+        sys.exit(1)
