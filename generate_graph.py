@@ -971,7 +971,9 @@ def generate_clone_sources(db_path: str, output_path: str, window_days=28, panel
     ax.set_yticklabels([names[r] for r in totals.index], fontsize=10)
     for i, (repo, row) in enumerate(totals.iterrows()):
         us = (row['own_ci'] + row['repeat']) / row.sum()
-        ax.text(101.5, i, f'{_fmt_count(row.sum())} clones, {us:.0%} likely us',
+        # Never round a nonzero outside share away into "100%".
+        pct = '>99%' if 0.99 < us < 1 else f'{us:.0%}'
+        ax.text(101.5, i, f'{_fmt_count(row.sum())} clones, {pct} likely us',
                 va='center', fontsize=9, color='#333333')
     ax.set_xlim(0, 100)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f'{v:.0f}%'))
