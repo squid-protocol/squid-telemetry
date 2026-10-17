@@ -52,4 +52,7 @@ jobs:
           git add --force traffic_metrics.db *.png
           
           # Only commit and push if the database or images actually changed
-          git diff --quiet && git diff --staged --quiet || (git commit -m "data: update telemetry DB and renderings" && git push origin main)
+          # A long run (e.g. an own-CI backfill) can finish after a PR merged to main; rebase the
+          # data commit onto the new main instead of losing the run. If main's DB itself changed
+          # meanwhile (another data run), the binary DB conflicts and the run fails rather than clobber it.
+          git diff --quiet && git diff --staged --quiet || (git commit -m "data: update telemetry DB and renderings" && git pull --rebase origin main && git push origin HEAD:main)
