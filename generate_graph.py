@@ -928,22 +928,24 @@ def split_clone_sources(total, unique, own_ci_est, unique_rate=1.0):
     own_ci = min(max(0, round(own_ci_est * unique_rate)), unique)
     return {'own_ci': own_ci, 'repeat': repeat, 'outside': unique - own_ci}
 
-def ci_unique_rate(days, min_days=20):
+def ci_unique_rate(days, min_days=20, min_ci=100, max_rate=2.0):
     """
     Unique cloners added per CI fetch for one repo: the slope of a least-squares
-    fit of daily unique_cloners on daily own_ci_est, clipped to 0..1. gitgalaxy
-    (actions/checkout, token-authenticated) fits ~0.08: about 12 CI checkouts
-    per unique cloner. Anonymous `git clone` of a crucible fits ~1. Below
-    min_days of CI-covered history, or when CI never varies, the fit is noise,
-    so this returns 1: every CI fetch assumed to be a fresh cloner, which can
-    only overstate our share.
+    fit of daily unique_cloners on daily own_ci_est, clipped to 0..max_rate.
+    gitgalaxy (actions/checkout, token-authenticated) fits ~0.08: about 12 CI
+    checkouts per unique cloner. Anonymous `git clone` of a crucible fits ~1,
+    and above 1 when our static count misses fetches (multi-job workflows,
+    ci_retry re-clones): language-crucible fits ~1.27, and capping it at 1
+    left ~1k of our own clones in "outside". Below min_days of CI-covered
+    history or min_ci total CI fetches, or when CI never varies, the fit is
+    noise and this returns 1.
     """
     days = days[['own_ci_est', 'unique_cloners']].astype(float)
-    if len(days) < min_days or days['own_ci_est'].std() == 0:
+    if len(days) < min_days or days['own_ci_est'].sum() < min_ci or days['own_ci_est'].std() == 0:
         return 1.0
     x, y = days['own_ci_est'], days['unique_cloners']
     slope = ((x - x.mean()) * (y - y.mean())).sum() / ((x - x.mean()) ** 2).sum()
-    return float(min(max(slope, 0.0), 1.0))
+    return float(min(max(slope, 0.0), max_rate))
 
 def _clone_split_frame(db_path: str):
     """

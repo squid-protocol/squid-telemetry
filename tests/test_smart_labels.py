@@ -48,3 +48,13 @@ def test_ci_rate_short_history_falls_back_to_one():
     from generate_graph import ci_unique_rate
     days = pd.DataFrame({'own_ci_est': [1, 5, 9], 'unique_cloners': [1, 1, 1]})
     assert ci_unique_rate(days) == 1.0
+
+
+def test_ci_rate_above_one_when_fetches_undercounted():
+    import pandas as pd
+    from generate_graph import ci_unique_rate
+    ci = pd.Series([50 * (1 + d % 4) for d in range(28)])
+    days = pd.DataFrame({'own_ci_est': ci, 'unique_cloners': 16 + (ci * 1.25).astype(int)})
+    assert abs(ci_unique_rate(days) - 1.25) < 0.02
+    days['unique_cloners'] = ci * 9  # absurd slope is capped
+    assert ci_unique_rate(days) == 2.0
