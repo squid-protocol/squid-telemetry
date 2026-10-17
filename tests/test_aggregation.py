@@ -53,3 +53,40 @@ jobs:
 """
     assert count_engine_checkouts(wf, "gitgalaxy") == 2      # default + explicit engine
     assert count_engine_checkouts(wf, "keyword-rosetta") == 1  # only the explicit engine one
+
+
+def test_checkout_counting_per_target():
+    os.environ.setdefault("TRAFFIC_READ_PAT", "x")
+    from scraper import count_checkouts
+    wf = """
+jobs:
+  a:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: squid-protocol/cics-crucible
+          path: cics
+      # - uses: actions/checkout@v4 (commented out, not counted)
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+"""
+    got = count_checkouts(wf, "gitgalaxy")
+    assert got["squid-protocol/gitgalaxy"] == 2   # bare checkout + expression -> own repo
+    assert got["squid-protocol/cics-crucible"] == 1
+
+
+def test_shell_fetches_counted():
+    os.environ.setdefault("TRAFFIC_READ_PAT", "x")
+    from scraper import count_checkouts
+    wf = """
+      - run: |
+          ci_retry.sh 4 10 -- bash -c 'rm -rf language-crucible && git clone --branch "$1" --depth 1 https://github.com/squid-protocol/language-crucible.git language-crucible' _ "$ref"
+          git -C cics-crucible remote add origin https://github.com/squid-protocol/cics-crucible.git
+          # git clone https://github.com/squid-protocol/estate-crucible (comment)
+"""
+    got = count_checkouts(wf, "gitgalaxy")
+    assert got["squid-protocol/language-crucible"] == 1
+    assert got["squid-protocol/cics-crucible"] == 1
+    assert "squid-protocol/estate-crucible" not in got

@@ -35,8 +35,9 @@ TARGET_REPOS = [
 # Repos whose workflows may check out squid-protocol/gitgalaxy (self-traffic estimate).
 OWN_CI_REPOS = [
     "gitgalaxy", "keyword-rosetta", "language-crucible", "cics-crucible",
-    "temporal-crucible", "cobol_to_java_examples", "gitgalaxy-raw-output",
-    "gitgalaxy-population-analyses",
+    "estate-crucible", "temporal-crucible", "cobol_to_java_examples",
+    "gitgalaxy-raw-output", "gitgalaxy-population-analyses", "squid-bot",
+    "promoter-bot",
 ]
 OWN_OWNER = "squid-protocol"
 ENGINE_REPO = "squid-protocol/gitgalaxy"
@@ -175,6 +176,21 @@ def init_db(conn):
             checkouts_per_run INTEGER,
             est_clones INTEGER,
             UNIQUE(date, repo_name, workflow)
+        )
+    """)
+
+    # Same estimate, but per checked-out repo: own_ci_clones only counts checkouts
+    # of the engine, this one counts every TARGET_REPOS repo a workflow fetches.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS own_ci_checkouts (
+            date TEXT,
+            ci_repo TEXT,
+            workflow TEXT,
+            target_repo TEXT,
+            runs INTEGER,
+            checkouts_per_run INTEGER,
+            est_clones INTEGER,
+            UNIQUE(date, ci_repo, workflow, target_repo)
         )
     """)
     conn.commit()
@@ -475,15 +491,32 @@ def fetch_action_adoption(conn):
         logging.error(f"Failed to fetch Action adoption: {resp.status_code} - {resp.text}")
         _note_auth_failure(resp, "Action adoption search")
 
+# `git clone [...] https://github.com/o/r(.git)` or `git [-C d] remote add <name> https://github.com/o/r`.
+SHELL_FETCH_RE = re.compile(
+    r"git\b[^#\n]*?\b(?:clone|remote add\s+\S+)\s[^#\n]*?github\.com[/:]([\w.-]+/[\w-]+(?:\.[\w-]+)*?)(?:\.git)?(?=[\s'\"]|$)")
+
 def count_engine_checkouts(workflow_text, own_repo):
     """Counts `actions/checkout` steps in a workflow that fetch the engine repo:
     in gitgalaxy itself, any checkout without a `repository:` override (or one naming
     it); in sibling repos, only checkouts with `repository: squid-protocol/gitgalaxy`.
     Static count: matrix expansion and `if:` conditions are NOT modelled."""
+    return count_checkouts(workflow_text, own_repo)[ENGINE_REPO]
+
+def count_checkouts(workflow_text, own_repo):
+    """Counter of {owner/repo: fetches per run} for one workflow. Counts `actions/checkout`
+    steps (one without a `repository:` override fetches the workflow's own repo) and
+    shell fetches -- `git clone <github url>` and `git remote add <name> <github url>`,
+    the way gitgalaxy pulls its crucibles. Same static caveats as above."""
     lines = workflow_text.splitlines()
-    n = 0
+    n = Counter()
     for i, line in enumerate(lines):
-        if "actions/checkout" not in line or line.lstrip().startswith("#"):
+        if line.lstrip().startswith("#"):
+            continue
+        shell = SHELL_FETCH_RE.search(line)
+        if shell:
+            n[shell.group(1)] += 1
+            continue
+        if "actions/checkout" not in line:
             continue
         block = []
         for nxt in lines[i + 1:i + 12]:
@@ -491,9 +524,7 @@ def count_engine_checkouts(workflow_text, own_repo):
                 break
             block.append(nxt)
         m = re.search(r"repository:\s*['\"]?([\w./-]+)", "\n".join(block))
-        target = m.group(1) if m else None
-        if target == ENGINE_REPO or (target is None and own_repo == "gitgalaxy"):
-            n += 1
+        n[m.group(1) if m else f"{OWN_OWNER}/{own_repo}"] += 1
     return n
 
 def fetch_own_ci_estimate(conn, since_days=3, today=None):
@@ -520,7 +551,7 @@ def fetch_own_ci_estimate(conn, since_days=3, today=None):
                 continue
             raw = requests.get(f["url"], headers={**HEADERS, "Accept": "application/vnd.github.raw"})
             if raw.status_code == 200:
-                k = count_engine_checkouts(raw.text, name)
+                k = Counter({t: c for t, c in count_checkouts(raw.text, name).items() if t in TARGET_REPOS})
                 if k:
                     per_wf[f["name"]] = k
         if not per_wf:
@@ -562,10 +593,18 @@ def fetch_own_ci_estimate(conn, since_days=3, today=None):
                 return
             counts.update(day_counts)
         for (d, wf), runs_n in counts.items():
-            cursor.execute("""
-                INSERT OR REPLACE INTO own_ci_clones (date, repo_name, workflow, runs, checkouts_per_run, est_clones)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (d, full, wf, runs_n, per_wf[wf], runs_n * per_wf[wf]))
+            engine_k = per_wf[wf][ENGINE_REPO]
+            if engine_k:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO own_ci_clones (date, repo_name, workflow, runs, checkouts_per_run, est_clones)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (d, full, wf, runs_n, engine_k, runs_n * engine_k))
+            for target, k in per_wf[wf].items():
+                cursor.execute("""
+                    INSERT OR REPLACE INTO own_ci_checkouts
+                        (date, ci_repo, workflow, target_repo, runs, checkouts_per_run, est_clones)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (d, full, wf, target, runs_n, k, runs_n * k))
         conn.commit()
     logging.info("Own-CI clone estimate stored.")
 

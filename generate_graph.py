@@ -2,6 +2,7 @@
 import sqlite3
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import requests
 from aggregation import all_time_window_totals
 
@@ -65,7 +66,7 @@ def _add_smart_end_labels(ax, cumulative_df, series, min_gap_frac=0.04):
     """
     Labels each line at its own last point with its name and running total
     (e.g. 'cics-crucible  412'), in the line's color. Spacing is done in
-    axes-fraction space, so it works on the log axis; a label that had to
+    axes-fraction space, so it works on linear or log axes; a label that had to
     move off its line's end gets a thin leader line back to it.
     """
     import matplotlib.transforms as mtransforms
@@ -86,7 +87,8 @@ def _add_smart_end_labels(ax, cumulative_df, series, min_gap_frac=0.04):
     ax.set_xlim(first_x, last_x + (last_x - first_x) * 0.36)
     to_frac = lambda y: ax.transAxes.inverted().transform(ax.transData.transform((0, y)))[1]
     fracs = [to_frac(y) for _, y, _, _ in ends]
-    spread = _spread_positions(fracs, min_gap_frac, upper=0.98)
+    # Floor keeps the lowest label off the x-axis line.
+    spread = _spread_positions([max(f, 0.03) for f in fracs], min_gap_frac, upper=0.98)
 
     label_x = last_x + (last_x - first_x) * 0.07
     text_coords = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
@@ -160,8 +162,7 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     
     # Zero-fill gaps so .cumsum() runs, then blank out each series until its
     # first nonzero day: a repo added to TARGET_REPOS later starts its line
-    # where its data starts instead of trailing a fake flat zero (which the
-    # log axis below couldn't draw anyway).
+    # where its data starts instead of trailing a fake flat zero.
     pivot_df = df.pivot(index='date', columns='repo_name', values='daily_downloads').fillna(0)
     cumulative_df = pivot_df.cumsum()
     cumulative_df = cumulative_df.where(cumulative_df > 0)
@@ -181,10 +182,9 @@ def generate_cumulative_graph(db_path: str, output_path: str):
             ax.plot(cumulative_df.index, cumulative_df[col], color=color, linestyle=style,
                     linewidth=width, label=label, zorder=zorder)
 
-    # Log scale: GitGalaxy is ~10^5 clones while a new crucible is ~10^1; on a
-    # linear axis everything but GitGalaxy would sit flat on the floor.
-    ax.set_yscale('log')
-    ax.set_ylim(bottom=1)
+    # Linear on purpose (raw volume, nothing subtracted); the small repos
+    # bunch near the floor and the end labels spread them out.
+    ax.set_ylim(bottom=0)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _fmt_count(v)))
 
     # NOTE: deliberately not labeled "Unique Fetches" -- PyPI's without_mirrors
@@ -197,7 +197,7 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     # count -- see the separate human-vs-CI chart for that story instead.
     ax.set_title("Cumulative Distribution Volume: GitGalaxy Ecosystem", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Combined Distribution Volume (log scale)", fontsize=12, labelpad=10)
+    ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
 
     # Format X-axis dates to Year-Month (YYYY-MM)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
@@ -900,6 +900,112 @@ def generate_clones_self_traffic(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
+# Split of each day's clones into "likely us" vs. "possibly outside" (see
+# split_clone_sources). Colors: our CI red, repeat fetches orange, outside blue.
+SOURCE_PARTS = [
+    ('own_ci', 'Our CI runners (estimate)', '#d62728'),
+    ('repeat', 'Repeat clones, same machine', '#ff7f0e'),
+    ('outside', 'Possibly outside', '#1f77b4'),
+]
+
+def split_clone_sources(total, unique, own_ci_est):
+    """
+    Splits one repo-day of GitHub clones into three parts that sum to `total`:
+      repeat  = total - unique: the same machine cloning again that day. People
+                rarely re-clone a repo the same day; our fleet, agent worktrees
+                and local scripts do it constantly.
+      own_ci  = our Actions runs x checkout steps (own_ci_checkouts), capped at
+                `unique`: hosted runners arrive fresh, so each is a new cloner.
+      outside = whatever unique cloners are left.
+    Outside CI that re-clones would land in `repeat`, and our fetches the
+    estimate misses (matrix jobs, local fresh clones) land in `outside`.
+    """
+    repeat = max(0, total - unique)
+    own_ci = min(max(0, own_ci_est), unique)
+    return {'own_ci': own_ci, 'repeat': repeat, 'outside': unique - own_ci}
+
+def generate_clone_sources(db_path: str, output_path: str, window_days=28, panels=6):
+    """Summary bar (whole window) plus daily panels for the busiest repos."""
+    import matplotlib.dates as mdates
+    conn = sqlite3.connect(db_path)
+    clones = pd.read_sql_query(
+        "SELECT repo_name, date, total_clones, unique_cloners FROM traffic_clones", conn)
+    try:
+        own = pd.read_sql_query(
+            "SELECT target_repo AS repo_name, date, SUM(est_clones) AS own_ci_est "
+            "FROM own_ci_checkouts GROUP BY target_repo, date", conn)
+    except Exception:
+        own = pd.DataFrame(columns=['repo_name', 'date', 'own_ci_est'])
+    conn.close()
+
+    names = {col: label for col, label, *_ in CUMULATIVE_SERIES if col.startswith('squid-protocol/')}
+    names['squid-protocol/gitgalaxy'] = 'gitgalaxy'
+    clones = clones[clones['repo_name'].isin(names)]
+    if clones.empty:
+        return
+    df = clones.merge(own, on=['repo_name', 'date'], how='left').fillna({'own_ci_est': 0})
+    df['date'] = pd.to_datetime(df['date'])
+    df = df[(df['date'] <= CUTOFF_DATE) & (df['date'] > CUTOFF_DATE - pd.Timedelta(days=window_days))]
+    parts = df.apply(lambda r: pd.Series(split_clone_sources(
+        int(r.total_clones), int(r.unique_cloners), int(r.own_ci_est))), axis=1)
+    df = pd.concat([df, parts], axis=1)
+    keys = [k for k, _, _ in SOURCE_PARTS]
+
+    totals = df.groupby('repo_name')[keys].sum()
+    totals = totals[totals.sum(axis=1) > 0]
+    totals = totals.loc[totals.sum(axis=1).sort_values().index]
+
+    fig = plt.figure(figsize=(15, 12))
+    gs = fig.add_gridspec(3, 3, height_ratios=[1.3, 1, 1], hspace=0.55, wspace=0.25)
+
+    # Summary: one 100% bar per repo (share of its clones), so the split reads
+    # the same for gitgalaxy's ~100k as for a repo with ten clones.
+    ax = fig.add_subplot(gs[0, :])
+    y = range(len(totals))
+    shares = totals.div(totals.sum(axis=1), axis=0) * 100
+    left = pd.Series(0.0, index=totals.index)
+    for key, label, color in SOURCE_PARTS:
+        ax.barh(y, shares[key], left=left, color=color, label=label)
+        left += shares[key]
+    ax.set_yticks(list(y))
+    ax.set_yticklabels([names[r] for r in totals.index], fontsize=10)
+    for i, (repo, row) in enumerate(totals.iterrows()):
+        us = (row['own_ci'] + row['repeat']) / row.sum()
+        ax.text(101.5, i, f'{_fmt_count(row.sum())} clones, {us:.0%} likely us',
+                va='center', fontsize=9, color='#333333')
+    ax.set_xlim(0, 100)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f'{v:.0f}%'))
+    ax.set_xlabel('Share of the repo\'s clones in the window', fontsize=10)
+    ax.set_title(f'Where the clones come from: last {window_days} days, by repo',
+                 fontsize=13, fontweight='bold', loc='left')
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.18), ncol=3, fontsize=10, frameon=False)
+    for side in ('top', 'right'):
+        ax.spines[side].set_visible(False)
+
+    # Daily stacked bars for the busiest repos.
+    busiest = list(totals.sum(axis=1).sort_values(ascending=False).index[:panels])
+    for n, repo in enumerate(busiest):
+        ax = fig.add_subplot(gs[1 + n // 3, n % 3])
+        d = df[df['repo_name'] == repo].sort_values('date')
+        bottom = pd.Series(0, index=d.index)
+        for key, _, color in SOURCE_PARTS:
+            ax.bar(d['date'], d[key], bottom=bottom, color=color, width=0.85)
+            bottom += d[key]
+        ax.set_title(names[repo], fontsize=11, fontweight='bold', loc='left')
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _fmt_count(v)))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+        ax.tick_params(axis='x', labelsize=8, rotation=45)
+        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        for side in ('top', 'right'):
+            ax.spines[side].set_visible(False)
+
+    fig.suptitle('Clones: likely us vs. possibly outside (estimate)', fontsize=16, fontweight='bold', y=0.98)
+    fig.text(0.5, 0.005, 'Repeat = same machine cloning again that day. Our CI = Actions runs x checkout steps '
+             '(lower bound: matrix jobs not multiplied). Outside = remaining unique cloners; '
+             'it still includes our fresh clones the estimate misses.', ha='center', fontsize=9, color='#555555')
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
 if __name__ == "__main__":
     db = "traffic_metrics.db"
     generate_cumulative_graph(db, "cumulative_downloads.png")
@@ -909,3 +1015,4 @@ if __name__ == "__main__":
     generate_release_correlation(db, "release_correlation.png")
     generate_human_vs_ci_adoption(db, "human_vs_ci_adoption.png")
     generate_clones_self_traffic(db, "clones_self_traffic.png")
+    generate_clone_sources(db, "clone_sources.png")
