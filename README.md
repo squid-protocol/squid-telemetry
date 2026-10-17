@@ -8,75 +8,74 @@
 
 ## Overview
 
-This repository serves as the centralized, automated data warehouse and visualization pipeline for **GitGalaxy**. Because the core GitGalaxy engine operates as a zero-trust, air-gapped static analyzer, it does not "phone home" or collect telemetry on the machines running it. 
+This repository is the automated data warehouse and chart pipeline for **GitGalaxy**'s public distribution metrics. The engine is a zero-trust, air-gapped static analyzer and phones nothing home, so everything here comes from what GitHub, GitLab and PyPI publish about the repos: clones, views, referrers, stars, forks and downloads.
 
-Instead, this repository passively aggregates our public distribution metrics—tracking how often the engine is fetched across GitHub, GitLab, and PyPI.
+## How to read these numbers
 
-## 📈 Core Telemetry & Metrics
+**Most of the raw clone volume is us.** GitGalaxy is built and proven by an autonomous coding fleet whose CI checks out the engine and its crucibles thousands of times a day. GitHub's clone counter can't tell those fetches from anyone else's, so raw clone curves mostly measure our own activity, not adoption. As of 2026-10-17:
 
-### Human Discovery vs. Production Integration
-GitGalaxy is meant to run *in* CI, not just get starred and forgotten — so instead of treating CI-driven traffic as noise to filter out, we track it as its own adoption signal, side by side with human discovery. Left panel: GitHub stars and forks (cumulative, reconstructed from each star's/fork's own timestamp — not just a snapshot going forward, see Methodology) alongside daily unique cloners and unique visitors (per-day counts, not cumulative). Right panel: GitLab CI/CD Catalog usage (unique projects running it in a pipeline in the last 30 days) and GitHub Action adoption (unique repos referencing `uses: squid-protocol/gitgalaxy` in a workflow, via code search — there's no Marketplace listing yet, so this is the best passive proxy available). Unlike the left panel, neither GitHub nor GitLab expose any history for these two, so expect the right panel to fill in day by day rather than show a backfilled trend.
-![Human Discovery vs. Production Integration](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/human_vs_ci_adoption.png)
+- gitgalaxy: ~93% of the last 28 days' clones were repeat clones by the same cloner (largely our CI); an estimated ~45 *possibly-outside* unique cloners a day remain, an upper estimate since it still holds our own local and fleet machines.
+- The crucibles and keyword-rosetta are almost entirely our CI. language-crucible's leftover (~16/day) still moves with our own CI.
+- Signals that track people more directly: 57 stars, 12 forks, ~10 unique visitors a day, Reddit as the main referrer, ~15k PyPI downloads (raw, CI installs included) that peaked in July. No repo outside squid-protocol uses the GitHub Action yet, and GitLab Catalog usage is 0.
 
-### Cumulative Adoption
-Tracking the combined volume of fetches of the GitGalaxy engine across PyPI, GitHub, and GitLab, alongside GitHub clone volume for the rest of the GitGalaxy ecosystem: the crucibles (`language-crucible`, `cics-crucible`, `estate-crucible`, `temporal-crucible`, `keyword-rosetta`), the AI harness (`squid-bot`, `promoter-bot`), and the evidence & example repos (`gitgalaxy-raw-output`, `gitgalaxy-population-analyses`, `cobol_to_java_examples`). Raw volume on a linear axis, nothing subtracted (see *Where the Clones Come From* for the likely-us split); each line is labeled at its end with its running total, and a repo's line starts on the first day it was tracked. The old negative-control repos are still scraped but no longer plotted. **Not a uniformly deduplicated count** — GitHub's unique-cloner count and GitLab's unique-project count are genuinely deduplicated, but PyPI's public download data has no identity to deduplicate against, so that component is a raw download-event count (see Methodology below).
-![GitGalaxy Cumulative Downloads](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/cumulative_downloads.png)
+So: the **Total Engagement** chart is raw activity, ours included. Read adoption from the estimate charts and the human signals below, never from raw clone volume.
 
-### The Conversion Funnel (All-Time)
-Measuring the transition from passive human intent (unique repository profile views) to active pipeline execution (unique automated fetches).
-![Conversion Funnel](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/conversion_funnel.png)
+## 📈 Charts
+
+### Total Engagement (raw, includes our own CI and fleet)
+Every fetch we can see, nothing subtracted: GitHub clones plus PyPI downloads plus GitLab Catalog usage for the engine, and GitHub clones for the rest of the ecosystem, i.e. the crucibles (`language-crucible`, `cics-crucible`, `estate-crucible`, `temporal-crucible`, `keyword-rosetta`), the AI harness (`squid-bot`, `promoter-bot`) and the evidence & example repos (`gitgalaxy-raw-output`, `gitgalaxy-population-analyses`, `cobol_to_java_examples`). Linear axis; each line starts on its first tracked day and is labeled with its running total. These are clone/download **events**, not people, and most of them are ours: this chart shows total activity, not adoption.
+![Total Engagement](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/cumulative_downloads.png)
+
+### Cumulative Clones, Our Own Traffic Removed (estimate)
+The same view, counting only each repo's *possibly-outside* unique cloners (the split below). Each line starts on the first day an own-CI estimate exists for that repo. **"(floor)"** marks repos where our CI accounts for the unique cloners on most days, so outside traffic there is hidden, not absent. PyPI can't be split (no per-machine data) and is left off; its raw total is in the footnote. "Possibly outside" is an upper estimate: our own fetches the estimate can't see (local clones, fleet machines) land in it too.
+![Cumulative clones, our traffic removed](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/cumulative_outside.png)
+
+### Where the Clones Come From (estimate)
+Each repo's GitHub clones split per day into **repeat clones** (`total - unique`: the same cloner again that day; people rarely do it, our CI, fleet and agent worktrees constantly do), **our CI** (the unique cloners our own workflows account for, see Methodology) and **possibly outside** (what's left). Top: each repo's share over the last 28 days. Below: daily bars for the six busiest repos. A rough split, not an audit.
+![Where the clones come from](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/clone_sources.png)
+
+### Discovery & Usage
+Left: GitHub stars and forks (cumulative, rebuilt from each star's and fork's own timestamp). Middle: unique cloners per day, all (faint, mostly our CI) and possibly outside (bold, estimate), plus unique visitors per day; these are per-day counts, never cumulated. Right: CI integration by **outside** repos only: GitLab CI/CD Catalog usage (unique projects, last 30 days) and repos outside squid-protocol whose workflows reference `squid-protocol/gitgalaxy` (code search). Both are 0 so far: the only workflow match has always been our own gitgalaxy repo.
+![Discovery & Usage](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/human_vs_ci_adoption.png)
 
 ### Discovery Channels (ranked all-time, plotted as trailing 14 days)
-The top referring external domains driving discovery of the GitGalaxy architecture. GitHub reports referrers only as a trailing-14-day total, so each plotted point is one day's 14-day window. Channels are ranked, and the legend totals computed, from **non-overlapping** 14-day snapshots only (see Methodology) and are in *visitor-windows*, not people.
+The top referring domains. GitHub reports referrers only as a trailing-14-day total, so each point is one day's 14-day window. Rankings and legend totals come from **non-overlapping** 14-day snapshots only (see Methodology) and are *visitor-windows*, not people. Our own browsing is included (it can't be separated).
 ![Discovery Channels](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/discovery_channels.png)
 
 ### Feature Intent Heatmap (ranked all-time, plotted as trailing 14 days)
-The most frequently inspected sub-directories and tools. Same trailing-14-day series and non-overlapping-window ranking as Discovery Channels; totals are visitor-windows.
+The most-viewed sub-directories and tools, with the same trailing-14-day series and non-overlapping-window ranking as Discovery Channels; totals are visitor-windows and include our own browsing.
 ![Feature Intent](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/feature_intent.png)
 
-### Clones vs. Our Own CI (estimate)
-GitHub's clone counter includes squid-protocol's own automation (CI checkouts of `gitgalaxy`). The dashed line is an **estimate** of that self-generated traffic; it is shown alongside, never subtracted from, GitHub's number. See Methodology for how it is derived and what it misses.
-![Clones vs own CI](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/clones_self_traffic.png)
-
-### Where the Clones Come From (estimate)
-A separate, *estimated* split of each repo's GitHub clones into **likely us** vs. **possibly outside**; the cumulative chart above stays raw. Per repo and day: **repeat clones** (`total - unique`: the same machine cloning again that day, which our fleet, agent worktrees and scripts do constantly and people rarely do), **our CI** (Actions runs x fetches per run of that repo, counting `actions/checkout` steps plus `git clone` / `git remote add` lines in our workflows; capped at the day's unique cloners), and **possibly outside** (the unique cloners left over). Top: each repo's share over the last 28 days; below: daily bars for the six busiest repos. Outside CI that re-clones lands in "repeat", and our own fresh fetches the estimate can't see (local clones, matrix jobs) land in "outside", so read it as a rough split, not an audit.
-![Where the clones come from](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/clone_sources.png)
-
-### Cumulative Clones, Our Own Traffic Removed (estimate)
-The cumulative chart again (linear), counting only each repo's *possibly outside* GitHub clones: repeat clones and our CI estimate are removed, using the split from the chart above. Each line starts on the first day a CI estimate exists for that repo, so repos start at different times. **"(floor)"** marks repos where our CI estimate met or exceeded the day's unique cloners on most days: GitHub folds many CI runners into one unique cloner, so there the subtraction wipes out the whole day and outside traffic is hidden, not absent. PyPI can't be split (no per-machine data), so it is left off and its raw total is given in the footnote.
-![Cumulative clones, our traffic removed](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/cumulative_outside.png)
-
-### Release Cadence vs. Downloads
-Correlating daily download spikes directly against version releases to monitor CI/CD Dependabot automated updates and community launch responses.
+### Releases vs. Outside-Facing Downloads
+PyPI downloads (raw: includes CI installs, so a release also triggers bots and pipelines) and gitgalaxy's possibly-outside GitHub cloners, both cumulative, against PyPI release dates. Combined raw clone volume is deliberately not used: its "release spikes" were our own pipelines reacting to our own releases.
 ![Release Correlation](https://raw.githubusercontent.com/squid-protocol/squid-telemetry/main/release_correlation.png)
 
-> *Graphs are generated automatically via Python/Matplotlib and synchronized daily via GitHub Actions.*
+> *Charts are generated with Python/Matplotlib and refreshed daily by GitHub Actions.*
 
 ---
 
 ## Methodology Notes
 
-Not every "count" below means the same thing — worth knowing when reading the charts:
+Not every "count" below means the same thing:
 
 | Source | What we store | Deduplicated? |
 |---|---|---|
-| GitHub (`traffic/clones`, `traffic/views`) | `unique_cloners`, `unique_visitors` | Deduplicated only **within one day** (a day's `uniques`). Summing days gives *unique visitor-days / cloner-days*, not people, so the charts show these per day and never cumulate them. |
-| GitLab CI/CD Catalog | `last30DayUsageCount` | Yes — GitLab's docs define this as unique *projects*, not pipeline runs |
-| PyPI (`pypistats.org`, `without_mirrors`) | raw download count | **No.** PyPI's public download data is anonymized by design — there's no identity to deduplicate against. `without_mirrors` only excludes known mirror-sync bots (e.g. bandersnatch); it does **not** exclude CI-driven installs (Dependabot, Actions test matrices, Docker builds all count fully). Treat PyPI's number as distribution *volume*, not unique adopters. |
-| GitHub Action adoption (code search) | distinct repos matching `"squid-protocol/gitgalaxy"` under `.github/workflows` | Approximate — deduped by repo, but code search only indexes each repo's default branch, and the query can't strictly anchor to `uses:` (GitHub code search tokenizes on punctuation), so it can slightly over-count. |
-| GitHub referrers / popular paths (`referring_sites`, `popular_content`) | one row per fetch date, each GitHub's **trailing 14-day rolling total** | Within a window only. Summing every daily fetch counted each visitor up to ~14x (reddit.com showed 2,208 vs ~168 correct). "All-time" figures now sum only **non-overlapping** snapshots: walk back from the newest fetch, keep a snapshot only if it is at least 14 days older than the last kept one (`aggregation.py`, tested in `tests/`). Result is *visitor-windows*: a person active in two windows counts twice, which the data cannot fix. Days older than the first window are not covered. |
-| Own-CI clone estimate (`own_ci_clones`) | per day, per workflow: Actions runs x static count of `actions/checkout` steps that fetch `squid-protocol/gitgalaxy` | **Estimate.** Runs come from the Actions API (non-skipped, by UTC creation day) for the repos listed in `scraper.py` (`OWN_CI_REPOS`); checkouts per run are counted from the workflow YAML. Matrix jobs and reruns are not multiplied (lower bound); `if:`-skipped steps and early-cancelled runs still count (upper bound). Local and agent-session fetches are **not observable** and are not included. Backfilled from run history on first rollout; if the token cannot read Actions the step is skipped and the series is simply absent. |
-
-This is also why "Cumulative Adoption" is labeled *distribution volume*, not "unique fetches" — only two of its three inputs are actually unique counts.
+| GitHub (`traffic/clones`, `traffic/views`) | `total_clones`, `unique_cloners`, `unique_visitors` | Uniques are per **day** only; summing days gives cloner-days / visitor-days, not people. GitHub folds token-authenticated fetches (our `actions/checkout` CI) into very few unique cloners, about 12 checkouts per unique cloner for gitgalaxy, while anonymous `git clone` runners each count as new. |
+| GitLab CI/CD Catalog | `last30DayUsageCount` | Yes, unique *projects* (per GitLab's docs), not pipeline runs. |
+| PyPI (`pypistats.org`, `without_mirrors`) | raw download count | **No.** PyPI's public data has no identity to deduplicate against; `without_mirrors` drops known mirror bots but **not** CI installs (Dependabot, Actions matrices, Docker builds). Distribution *volume*, not adopters. |
+| GitHub Action adoption (code search) | repos matching `"squid-protocol/gitgalaxy"` under `.github/workflows`: `unique_repos` (all) and `external_repos` (outside squid-protocol, collected from 2026-10-18) | Deduped by repo; default branch only; can slightly over-count (matches a comment too). Charts use outside repos only. Before `external_repos` existed, `unique_repos` never exceeded 1 and that match was our own gitgalaxy repo. |
+| GitHub referrers / popular paths (`referring_sites`, `popular_content`) | one row per fetch date, each a **trailing 14-day rolling total** | Within a window only. "All-time" figures sum only **non-overlapping** snapshots (`aggregation.py`, tested in `tests/`), giving *visitor-windows*: a person active in two windows counts twice. |
+| Own-CI fetch estimate (`own_ci_checkouts`; engine-only history in `own_ci_clones`) | per day, workflow and target repo: Actions runs x fetches of that repo per run, counted from the workflow YAML (`actions/checkout` steps plus `git clone` / `git remote add` lines) across `OWN_CI_REPOS` | **Estimate.** Static count: matrix jobs, multi-job workflows and retries aren't multiplied; `if:`-skipped steps and cancelled runs still count. Local and fleet-machine fetches are not observable. Refill history with the workflow's `own_ci_backfill_days` input (30 days takes ~40 min). |
+| Unique cloners per CI fetch (`ci_unique_rate`) | fitted per repo at chart time: slope of daily unique cloners on daily CI fetches, clipped to 0..2 | Needs 20+ days and 100+ CI fetches, else 1 is assumed. gitgalaxy fits ~0.08 (token-authenticated checkouts collapse); language-crucible ~1.27 (anonymous clones, plus fetches the static count misses). Our CI's share of a day's unique cloners = CI fetches x this rate, capped at the day's uniques. |
 
 ## How This Pipeline Works
 
 This repository is completely self-contained and runs on an automated daily CRON schedule via GitHub Actions.
 
-1. **The Scraper (`scraper.py`):** At UTC Midnight, the pipeline reaches out to the GitHub REST API (traffic, repo stats, code search), GitLab GraphQL API, and PyPI Stats API to pull the sliding 14-day window of clones/views, point-in-time stars/forks, and downloads.
+1. **The Scraper (`scraper.py`):** At UTC midnight, the pipeline calls the GitHub REST API (traffic, repo stats, code search, Actions runs for the own-CI estimate), GitLab GraphQL API and PyPI Stats API to pull the sliding 14-day window of clones/views, stars/forks, and downloads.
 2. **The Database (`traffic_metrics.db`):** The raw JSON responses are normalized and safely upserted into a highly relational SQLite database.
-3. **The Visualizer (`generate_graph.py`):** Pandas and Matplotlib query the SQLite database to calculate rolling windows and cumulative totals, rendering the time-series data into clean, professional PNG artifacts. (`release_correlation.py` at the repo root is an earlier, standalone iteration of this file's release-correlation chart, kept for reference — it isn't invoked by the pipeline.)
-4. **The Commit (`telemetry_pipeline.yml`):** The CI/CD runner automatically commits the updated database and new image artifacts back to this repository, ensuring the dashboard remains perfectly synchronized without manual intervention.
+3. **The Visualizer (`generate_graph.py`):** Pandas and Matplotlib query the SQLite database to calculate rolling windows and cumulative totals, rendering the PNG charts. (`release_correlation.py` at the repo root is an earlier, standalone iteration of this file's release-correlation chart, kept for reference — it isn't invoked by the pipeline.)
+4. **The Commit (`telemetry_pipeline.yml`):** The CI/CD runner automatically commits the updated database and new image artifacts back to this repository, rebasing onto `main` first so a long run isn't lost when something merges meanwhile.
 ---
 
 ## The GitGalaxy constellation
@@ -86,7 +85,7 @@ This repo is one strand of the web of repos that build, prove, and showcase
 **spreads** (fetches, views, referrers); the runtime evidence for what it *does* lives next door:
 
 - [gitgalaxy](https://github.com/squid-protocol/gitgalaxy) — the engine these metrics track
-- **squid-telemetry** — *you are here*: public distribution/adoption analytics (the engine itself is air-gapped and phones nothing home)
+- **squid-telemetry** — *you are here*: public distribution analytics, with our own traffic estimated and separated (the engine itself is air-gapped and phones nothing home)
 - [gitgalaxy-raw-output](https://github.com/squid-protocol/gitgalaxy-raw-output) — unedited scan outputs + speed telemetry on hundreds of real repos
 - [language-crucible](https://github.com/squid-protocol/language-crucible) — the pinned adversarial corpus behind the engine's golden-master regression gate
 - [keyword-rosetta](https://github.com/squid-protocol/keyword-rosetta) — one planted program in 46 languages, measuring cross-language measurement consistency
