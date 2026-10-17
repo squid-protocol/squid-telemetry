@@ -196,9 +196,12 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     # genuinely deduplicated (per-project, per GitLab's own docs). Summing
     # them is a useful combined *volume* signal, but not a "unique adopters"
     # count -- see the separate human-vs-CI chart for that story instead.
-    ax.set_title("Cumulative Distribution Volume: GitGalaxy Ecosystem", fontsize=16, pad=20, fontweight='bold')
+    # "Total Engagement", raw: most of this volume is our own CI and fleet (see
+    # clone_sources / cumulative_outside for the estimated split).
+    ax.set_title("Total Engagement: GitGalaxy Ecosystem (raw, includes our own CI and fleet)",
+                 fontsize=15, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
+    ax.set_ylabel("Clone + download events (cumulative)", fontsize=12, labelpad=10)
 
     # Format X-axis dates to Year-Month (YYYY-MM)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
@@ -224,116 +227,6 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
-def _label_rolling_peaks(ax, dates, values, color, window=5, top_n=6):
-    """
-    Labels only the top_n statistically real peaks in a series -- local
-    maxima ranked by z-score against a centered rolling mean/std -- instead
-    of every point or an arbitrary fixed stride. Adaptive: as the series
-    grows, the same top_n most-prominent peaks surface regardless of how
-    many points now exist, rather than an arbitrary stride drifting in and
-    out of alignment with the real high points.
-    """
-    s = pd.Series(list(values), index=pd.DatetimeIndex(dates))
-    if len(s) < 3:
-        return
-    roll_mean = s.rolling(window, center=True, min_periods=3).mean()
-    roll_std = s.rolling(window, center=True, min_periods=3).std(ddof=0)
-    z = ((s - roll_mean) / roll_std.replace(0, float('nan'))).fillna(0)
-
-    # Local maxima only -- higher than each available neighbor -- so a point
-    # partway up a single big jump doesn't get labeled just because the jump
-    # itself pushed its z-score high.
-    prev_val, next_val = s.shift(1), s.shift(-1)
-    is_peak = ((s > prev_val) | prev_val.isna()) & ((s > next_val) | next_val.isna())
-
-    top_dates = z[is_peak].sort_values(ascending=False).head(top_n).index
-    y_offset = s.max() * 0.02
-    for d in top_dates:
-        y = s.loc[d]
-        ax.text(d, y + y_offset, f'{int(y)}', ha='center', va='bottom', fontsize=9,
-                 color=color, fontweight='bold')
-
-def generate_conversion_funnel(db_path: str, output_path: str):
-    conn = sqlite3.connect(db_path)
-    query = """
-        WITH views AS (
-            SELECT date, unique_visitors as views
-            FROM traffic_views
-            WHERE repo_name = 'squid-protocol/gitgalaxy'
-        ),
-        downloads AS (
-            SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
-            UNION ALL
-            SELECT date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
-            UNION ALL
-            SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
-        ),
-        agg_downloads AS (
-            SELECT date, SUM(volume) as total_downloads
-            FROM downloads
-            GROUP BY date
-        )
-        SELECT v.date, v.views, COALESCE(d.total_downloads, 0) as downloads
-        FROM views v
-        LEFT JOIN agg_downloads d ON v.date = d.date
-        ORDER BY v.date ASC;
-    """
-    # BUG FIX: this used to hard-limit to the last 14 rows, labeled "14-Day
-    # Rolling" -- but that name described the ROLLING WINDOW GitHub's traffic
-    # API itself returns (each call only exposes the trailing 14 days), not
-    # a deliberate choice to only ever chart 14 days total. Once the pipeline
-    # has been running longer than 14 days, `traffic_views` genuinely holds
-    # more history than that (each day's real value was captured before it
-    # aged out of GitHub's own 14-day window) -- so showing only the last 14
-    # rows was throwing away real collected history for no reason. Now shows
-    # everything collected so far.
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    
-    if df.empty: return
-    
-    df = df.sort_values('date') 
-    df['date_dt'] = pd.to_datetime(df['date'])
-    
-    df = df[df['date_dt'] <= CUTOFF_DATE]
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Render both datasets as plain lines (no point markers -- the per-point
-    # numeric labels below already mark each value, a redundant dot on top
-    # just adds clutter).
-    # NOTE: "downloads" here is a combined volume (GitHub clone events + PyPI
-    # download events + GitLab unique-project usage), not a uniformly
-    # deduplicated count -- see generate_cumulative_graph()'s own note.
-    ax.plot(df['date_dt'], df['views'], color='#4682B4', linewidth=2, label='Unique Visitors per Day (Intent)')
-    ax.plot(df['date_dt'], df['downloads'], color='#00008B', linewidth=2, label='Combined Fetch Volume (Execution)')
-
-    # Numeric labels only on the downloads line's real statistical peaks --
-    # see _label_rolling_peaks docstring. Views labels dropped entirely: that
-    # line hugs 0 on this scale, so its labels were the densest and least
-    # readable of the two anyway.
-    _label_rolling_peaks(ax, df['date_dt'], df['downloads'], color='#00008B')
-    
-    ax.set_title("GitGalaxy Conversion Funnel (All-Time)", fontsize=16, pad=20, fontweight='bold')
-    ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Per-day count (visitors / fetch events; incl. own CI)", fontsize=12, labelpad=10)
-
-    import matplotlib.dates as mdates
-    # Day-level format (not '%Y-%m' -- month-only was unreadable on the old
-    # 14-day window) capped at a reasonable tick count via AutoDateLocator so
-    # it stays legible as more history accumulates, instead of a tick per day.
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=12))
-    plt.xticks(rotation=45)
-    
-    ax.legend(loc='upper left')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.grid(True, linestyle='--', alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
-    print(f"Graph successfully rendered to: {output_path}")
-    
 def _add_end_of_line_labels(ax, pivot_df, colors, min_gap_frac=0.045):
     """
     Labels each line at its own final data point instead of a separate
@@ -561,37 +454,34 @@ def generate_release_correlation(db_path: str, output_path: str):
         clustered_releases[cluster_start] = (date_str, releases[date_str])
     releases = {date_str: version for date_str, version in clustered_releases.values()}
 
-    # 3. Query the aggregated daily fetches across all sources
+    # 3. Outside-facing series only. The old line summed GitHub clones + PyPI +
+    # GitLab, and GitHub clones are mostly our own CI: its "release spikes" were
+    # our pipelines reacting to our releases. PyPI stays raw (it can't be split);
+    # GitHub is the estimated possibly-outside unique cloners (clone_sources).
     conn = sqlite3.connect(db_path)
-    query = """
-        WITH combined_traffic AS (
-            SELECT date, downloads as volume FROM pypi_downloads WHERE repo_name = 'squid-protocol/gitgalaxy'
-            UNION ALL
-            SELECT date, total_clones as volume FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy'
-            UNION ALL
-            SELECT date, MAX(0, usage_count_30_days - COALESCE(LAG(usage_count_30_days) OVER (ORDER BY date), 0)) as volume FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy'
-        )
-        SELECT date, SUM(volume) as daily_downloads 
-        FROM combined_traffic 
-        GROUP BY date 
-        ORDER BY date ASC;
-    """
-    df = pd.read_sql_query(query, conn)
+    pypi = pd.read_sql_query(
+        "SELECT date, downloads FROM pypi_downloads WHERE repo_name = ? ORDER BY date", conn, params=(ENGINE,))
     conn.close()
+    split, _ = _clone_split_frame(db_path)
+    outside = pd.Series(dtype=float)
+    if split is not None:
+        g = split[(split['repo_name'] == ENGINE) & (split['date'] >= split['ci_since'])]
+        outside = g.set_index('date')['outside'].sort_index().cumsum()
+    if pypi.empty and outside.empty:
+        return
+    pypi['date_dt'] = pd.to_datetime(pypi['date'])
+    pypi = pypi[pypi['date_dt'] <= CUTOFF_DATE]
+    pypi_cum = pypi.set_index('date_dt')['downloads'].cumsum()
+    df = pd.DataFrame({'date_dt': pypi_cum.index.union(outside.index)})
 
-    if df.empty: return
-
-    # 4. Process data and calculate cumulative sum
-    df['date_dt'] = pd.to_datetime(df['date'])
-    df = df[df['date_dt'] <= CUTOFF_DATE]
-        
-    df['cumulative_downloads'] = df['daily_downloads'].cumsum()
-    
     # 5. Render the graph
     import matplotlib.dates as mdates
     fig, ax = plt.subplots(figsize=(14, 7))
-    
-    ax.plot(df['date_dt'], df['cumulative_downloads'], color='#4682B4', linewidth=3, label='Cumulative Distribution Volume')
+    ax.plot(pypi_cum.index, pypi_cum.values, color='#ff7f0e', linewidth=3,
+            label='PyPI downloads (raw; includes CI installs)')
+    if not outside.empty:
+        ax.plot(outside.index, outside.values, color='#1f77b4', linewidth=3,
+                label='GitHub possibly-outside cloners (estimate)')
 
     # Sort dates to calculate the 75% threshold for label placement
     sorted_dates = sorted(releases.keys())
@@ -617,9 +507,9 @@ def generate_release_correlation(db_path: str, output_path: str):
                         fontweight='bold', fontsize=9, va=va_align, ha='right',
                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
 
-    ax.set_title("GitGalaxy Cumulative Downloads vs. Release Cadence", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("GitGalaxy Releases vs. Outside-Facing Downloads", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
+    ax.set_ylabel("Cumulative count", fontsize=12, labelpad=10)
     
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     plt.xticks(rotation=45)
@@ -670,8 +560,21 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         "SELECT date, usage_count_30_days FROM gitlab_catalog_usage WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date",
         conn,
     )
-    ci_action = pd.read_sql_query("SELECT date, unique_repos FROM action_adoption ORDER BY date", conn)
+    # Outside repos only. Before external_repos existed, unique_repos never exceeded 1
+    # and the one match (verified 2026-10-17) was squid-protocol/gitgalaxy itself.
+    try:
+        ci_action = pd.read_sql_query(
+            "SELECT date, COALESCE(external_repos, MAX(unique_repos - 1, 0)) AS unique_repos "
+            "FROM action_adoption ORDER BY date", conn)
+    except Exception:  # DB from before the external_repos column
+        ci_action = pd.read_sql_query(
+            "SELECT date, MAX(unique_repos - 1, 0) AS unique_repos FROM action_adoption ORDER BY date", conn)
     conn.close()
+    split, _ = _clone_split_frame(db_path)
+    outside_clones = pd.DataFrame(columns=['date', 'outside'])
+    if split is not None:
+        outside_clones = split[(split['repo_name'] == ENGINE) & (split['date'] >= split['ci_since'])][['date', 'outside']]
+        outside_clones = outside_clones.sort_values('date')
 
     all_frames = (human_stars, human_clones, human_views, ci_gitlab, ci_action)
     if all(df.empty for df in all_frames):
@@ -806,7 +709,13 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
         traffic_dates = pd.concat([df['date'] for df in (human_clones, human_views) if not df.empty])
         if not traffic_dates.empty and traffic_dates.min() > date_min:
             ax_traffic.plot([date_min, traffic_dates.min()], [0, 0], color='#999999', linewidth=2, zorder=1)
-        _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#1f77b4', linewidth=2, label='Unique Cloners per Day')
+        # All unique cloners are mostly our own CI (GitHub folds token-authenticated
+        # checkouts into few cloners, but still dozens to hundreds a day), so the
+        # raw line is drawn faint and the estimated outside share bold.
+        _plot_series(ax_traffic, human_clones, 'unique_cloners', color='#9ecae1', linewidth=1.5,
+                     label='Unique cloners/day (all, incl. our CI)')
+        _plot_series(ax_traffic, outside_clones, 'outside', color='#08519c', linewidth=2.5,
+                     label='Possibly-outside cloners/day (est.)')
         _plot_series(ax_traffic, human_views, 'unique_visitors', color='#4682B4', linewidth=1.5, linestyle='--',
                      label='Unique Visitors per Day')
         ax_traffic.set_title("Repository Traffic", fontsize=TITLE_FS, fontweight='bold')
@@ -822,7 +731,7 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
                      drawstyle='steps-post', label='GitLab')
         _plot_series(ax_ci, ci_action, 'unique_repos', color='#2ca02c', linewidth=4,
                      drawstyle='steps-post', label='GitHub Action')
-        ax_ci.set_title("Production / CI Integration", fontsize=TITLE_FS, fontweight='bold')
+        ax_ci.set_title("CI Integration (outside repos)", fontsize=TITLE_FS, fontweight='bold')
 
         # No emoji anywhere in this figure: matplotlib's default DejaVu Sans
         # font has no emoji glyphs, so they'd render as empty tofu boxes on
@@ -849,6 +758,10 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
             ax.legend(loc='upper left', framealpha=0.9, prop={'size': LEGEND_FS, 'weight': 'bold'})
 
         ax_traffic.set_ylabel("Unique per day", fontsize=AXIS_FS, fontweight='bold')
+        # Whole repos/projects only; keep a 0..2 range so an honest zero reads
+        # as zero rather than as ticks of 0.015.
+        ax_ci.set_ylim(0, max(2, ax_ci.get_ylim()[1]))
+        ax_ci.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
 
         # Simpler, plain-language title -- "Human Discovery vs. Production
         # Integration" reads like an internal analytics label, not something
@@ -857,48 +770,6 @@ def generate_human_vs_ci_adoption(db_path: str, output_path: str):
                      fontweight='bold', y=1.03)
         plt.tight_layout()
         plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
-    print(f"Graph successfully rendered to: {output_path}")
-
-def generate_clones_self_traffic(db_path: str, output_path: str):
-    """Daily total clone events on gitgalaxy vs. an ESTIMATE of those caused by
-    squid-protocol's own CI (own_ci_clones table: runs x static checkout count).
-    Shown as a separate series, never subtracted from the GitHub numbers."""
-    conn = sqlite3.connect(db_path)
-    clones = pd.read_sql_query(
-        "SELECT date, total_clones FROM traffic_clones WHERE repo_name = 'squid-protocol/gitgalaxy' ORDER BY date", conn)
-    try:
-        own = pd.read_sql_query("SELECT date, SUM(est_clones) AS est_clones FROM own_ci_clones GROUP BY date ORDER BY date", conn)
-    except Exception:  # table not created yet
-        own = pd.DataFrame(columns=['date', 'est_clones'])
-    conn.close()
-    if clones.empty:
-        return
-    clones['date'] = pd.to_datetime(clones['date'])
-    clones = clones[clones['date'] <= CUTOFF_DATE]
-    own['date'] = pd.to_datetime(own['date'])
-    own = own[own['date'].between(clones['date'].min(), clones['date'].max())]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(clones['date'], clones['total_clones'], color='#00008B', linewidth=2, label='Total clones per day (GitHub)')
-    if not own.empty:
-        ax.plot(own['date'], own['est_clones'], color='#d62728', linewidth=2, linestyle='--',
-                label='Own CI (est.): workflow runs x engine checkouts')
-    ax.set_title("GitGalaxy Clones: Total vs. Own-CI Estimate", fontsize=16, pad=20, fontweight='bold')
-    ax.set_xlabel("Date (UTC)", fontsize=12, labelpad=10)
-    ax.set_ylabel("Clone/fetch events per day", fontsize=12, labelpad=10)
-    ax.text(0.01, 0.01, "Estimate counts only squid-protocol Actions runs; excludes local/agent fetches and matrix jobs.",
-            transform=ax.transAxes, fontsize=8, color='#555555')
-    import matplotlib.dates as mdates
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=6, maxticks=12))
-    plt.xticks(rotation=45)
-    ax.set_ylim(bottom=0)
-    ax.legend(loc='upper left')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.grid(True, linestyle='--', alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
 # Split of each day's clones into "likely us" vs. "possibly outside" (see
@@ -1130,11 +1001,9 @@ def generate_outside_cumulative(db_path: str, output_path: str):
 if __name__ == "__main__":
     db = "traffic_metrics.db"
     generate_cumulative_graph(db, "cumulative_downloads.png")
-    generate_conversion_funnel(db, "conversion_funnel.png")
     generate_discovery_engine(db, "discovery_channels.png")
     generate_feature_heatmap(db, "feature_intent.png")
     generate_release_correlation(db, "release_correlation.png")
     generate_human_vs_ci_adoption(db, "human_vs_ci_adoption.png")
-    generate_clones_self_traffic(db, "clones_self_traffic.png")
     generate_clone_sources(db, "clone_sources.png")
     generate_outside_cumulative(db, "cumulative_outside.png")
