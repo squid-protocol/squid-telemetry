@@ -19,9 +19,14 @@ CUMULATIVE_SERIES = [
     ('squid-protocol/cics-crucible', 'cics-crucible', '#17becf', '-', 2.5),
     ('squid-protocol/estate-crucible', 'estate-crucible', '#bcbd22', '-', 2.5),
     ('squid-protocol/temporal-crucible', 'temporal-crucible', '#2f4f4f', '-', 2.5),
+    ('squid-protocol/keyword-rosetta', 'keyword-rosetta', '#6a3d9a', '-', 2.5),
     # AI harness
     ('squid-protocol/squid-bot', 'squid-bot', '#8c564b', '-.', 2.5),
     ('squid-protocol/promoter-bot', 'promoter-bot', '#e377c2', '-.', 2.5),
+    # Evidence & examples
+    ('squid-protocol/gitgalaxy-raw-output', 'gitgalaxy-raw-output', '#b8860b', ':', 2.5),
+    ('squid-protocol/gitgalaxy-population-analyses', 'population-analyses', '#800000', ':', 2.5),
+    ('squid-protocol/cobol_to_java_examples', 'cobol_to_java_examples', '#ff4500', ':', 2.5),
 ]
 
 def _fmt_count(v):
@@ -78,19 +83,20 @@ def _add_smart_end_labels(ax, cumulative_df, series, min_gap_frac=0.04):
 
     first_x, last_x = cumulative_df.index.min(), cumulative_df.index.max()
     # Reserve room to the right of the data for the labels themselves.
-    ax.set_xlim(first_x, last_x + (last_x - first_x) * 0.30)
+    ax.set_xlim(first_x, last_x + (last_x - first_x) * 0.36)
     to_frac = lambda y: ax.transAxes.inverted().transform(ax.transData.transform((0, y)))[1]
     fracs = [to_frac(y) for _, y, _, _ in ends]
     spread = _spread_positions(fracs, min_gap_frac, upper=0.98)
 
-    label_x = last_x + (last_x - first_x) * 0.03
+    label_x = last_x + (last_x - first_x) * 0.07
     text_coords = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
     for (x, y, text, color), frac, target in zip(ends, fracs, spread):
         moved = abs(target - frac) > 0.005
         ax.annotate(text, xy=(x, y), xycoords='data', xytext=(label_x, target),
                     textcoords=text_coords, color=color, va='center', ha='left',
                     fontsize=10, fontweight='bold',
-                    arrowprops=dict(arrowstyle='-', color=color, lw=0.8, alpha=0.6) if moved else None)
+                    arrowprops=dict(arrowstyle='-', color=color, lw=0.8, alpha=0.6,
+                                    relpos=(0, 0.5), shrinkA=2) if moved else None)
 
 
 def generate_cumulative_graph(db_path: str, output_path: str):
@@ -201,7 +207,7 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     # only decodes the line-style groups.
     _add_smart_end_labels(ax, cumulative_df, CUMULATIVE_SERIES)
     group_keys = [Line2D([], [], color='#555555', linestyle=style, linewidth=2, label=name)
-                  for name, style in (('GitGalaxy engine', '--'), ('Crucibles', '-'), ('AI harness', '-.'))]
+                  for name, style in (('GitGalaxy engine', '--'), ('Crucibles', '-'), ('AI harness', '-.'), ('Evidence & examples', ':'))]
     ax.legend(handles=group_keys, loc='upper left', fontsize=10, frameon=False)
 
     # Clean up the bounding box

@@ -17,12 +17,16 @@ TARGET_REPOS = [
     "squid-protocol/cics-crucible",
     "squid-protocol/estate-crucible",
     "squid-protocol/temporal-crucible",
+    "squid-protocol/keyword-rosetta",
     # AI harness (autonomous coding fleet)
     "squid-protocol/squid-bot",
     "squid-protocol/promoter-bot",
+    # Evidence & examples
+    "squid-protocol/gitgalaxy-raw-output",
+    "squid-protocol/gitgalaxy-population-analyses",
+    "squid-protocol/cobol_to_java_examples",
     # Former negative controls: still scraped so their history keeps
     # accruing (GitHub serves only 14 days back), but no longer plotted.
-    "squid-protocol/cobol_to_java_examples",
     "squid-protocol/teaching-portfolio",
     "squid-protocol/meow-turtle",
     "squid-protocol/sorting_evolution_algorithm"
