@@ -905,25 +905,47 @@ def generate_clones_self_traffic(db_path: str, output_path: str):
 # split_clone_sources). Colors: our CI red, repeat fetches orange, outside blue.
 SOURCE_PARTS = [
     ('own_ci', 'Our CI runners (estimate)', '#d62728'),
-    ('repeat', 'Repeat clones, same machine', '#ff7f0e'),
+    ('repeat', 'Repeat clones (same cloner)', '#ff7f0e'),
     ('outside', 'Possibly outside', '#1f77b4'),
 ]
 
-def split_clone_sources(total, unique, own_ci_est):
+def split_clone_sources(total, unique, own_ci_est, unique_rate=1.0):
     """
     Splits one repo-day of GitHub clones into three parts that sum to `total`:
-      repeat  = total - unique: the same machine cloning again that day. People
-                rarely re-clone a repo the same day; our fleet, agent worktrees
-                and local scripts do it constantly.
-      own_ci  = our Actions runs x checkout steps (own_ci_checkouts), capped at
-                `unique`: hosted runners arrive fresh, so each is a new cloner.
+      repeat  = total - unique: the same cloner again that day. People rarely
+                re-clone a repo the same day; our fleet, agent worktrees, local
+                scripts and token-authenticated CI checkouts do it constantly.
+      own_ci  = the unique cloners our CI accounts for: own_ci_est (Actions runs
+                x fetch steps) x unique_rate, capped at `unique`. unique_rate is
+                how many unique cloners one CI fetch adds (ci_unique_rate): ~1
+                for anonymous `git clone`, far below 1 for actions/checkout,
+                whose token-authenticated runs GitHub folds into few cloners.
       outside = whatever unique cloners are left.
     Outside CI that re-clones would land in `repeat`, and our fetches the
-    estimate misses (matrix jobs, local fresh clones) land in `outside`.
+    estimate misses (local fresh clones, fleet machines) land in `outside`.
     """
     repeat = max(0, total - unique)
-    own_ci = min(max(0, own_ci_est), unique)
+    own_ci = min(max(0, round(own_ci_est * unique_rate)), unique)
     return {'own_ci': own_ci, 'repeat': repeat, 'outside': unique - own_ci}
+
+def ci_unique_rate(days, min_days=20, min_ci=100, max_rate=2.0):
+    """
+    Unique cloners added per CI fetch for one repo: the slope of a least-squares
+    fit of daily unique_cloners on daily own_ci_est, clipped to 0..max_rate.
+    gitgalaxy (actions/checkout, token-authenticated) fits ~0.08: about 12 CI
+    checkouts per unique cloner. Anonymous `git clone` of a crucible fits ~1,
+    and above 1 when our static count misses fetches (multi-job workflows,
+    ci_retry re-clones): language-crucible fits ~1.27, and capping it at 1
+    left ~1k of our own clones in "outside". Below min_days of CI-covered
+    history or min_ci total CI fetches, or when CI never varies, the fit is
+    noise and this returns 1.
+    """
+    days = days[['own_ci_est', 'unique_cloners']].astype(float)
+    if len(days) < min_days or days['own_ci_est'].sum() < min_ci or days['own_ci_est'].std() == 0:
+        return 1.0
+    x, y = days['own_ci_est'], days['unique_cloners']
+    slope = ((x - x.mean()) * (y - y.mean())).sum() / ((x - x.mean()) ** 2).sum()
+    return float(min(max(slope, 0.0), max_rate))
 
 def _clone_split_frame(db_path: str):
     """
@@ -965,8 +987,11 @@ def _clone_split_frame(db_path: str):
     df.loc[df['repo_name'] == ENGINE, 'ci_since'] = min(
         d for d in (engine_since, checkouts_since, pd.Timestamp.max) if pd.notna(d))
 
+    rates = {repo: ci_unique_rate(g[g['date'] >= g['ci_since']])
+             for repo, g in df.groupby('repo_name')}
+    df['unique_rate'] = df['repo_name'].map(rates)
     parts = df.apply(lambda r: pd.Series(split_clone_sources(
-        int(r.total_clones), int(r.unique_cloners), int(r.own_ci_est))), axis=1)
+        int(r.total_clones), int(r.unique_cloners), int(r.own_ci_est), r.unique_rate)), axis=1)
     return pd.concat([df, parts], axis=1), names
 
 def generate_clone_sources(db_path: str, output_path: str, window_days=28, panels=6):
@@ -1029,9 +1054,10 @@ def generate_clone_sources(db_path: str, output_path: str, window_days=28, panel
             ax.spines[side].set_visible(False)
 
     fig.suptitle('Clones: likely us vs. possibly outside (estimate)', fontsize=16, fontweight='bold', y=0.98)
-    fig.text(0.5, 0.005, 'Repeat = same machine cloning again that day. Our CI = Actions runs x checkout steps '
-             '(lower bound: matrix jobs not multiplied). Outside = remaining unique cloners; '
-             'it still includes our fresh clones the estimate misses.', ha='center', fontsize=9, color='#555555')
+    fig.text(0.5, 0.005, 'Repeat = the same cloner again that day (incl. our token-authenticated CI checkouts, which GitHub '
+             'folds into few cloners). Our CI = Actions fetches x unique cloners per fetch, fitted per repo.\n'
+             'Outside = remaining unique cloners; it still includes our own fetches the estimate misses '
+             '(local and fleet machines).', ha='center', fontsize=9, color='#555555')
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
@@ -1057,7 +1083,7 @@ def generate_outside_cumulative(db_path: str, output_path: str):
     cumulative = pivot.cumsum().where(pivot.notna().cummax())
 
     # A day is swamped when our CI estimate is nonzero and covers every unique cloner.
-    swamped_day = (df['own_ci_est'] > 0) & (df['own_ci_est'] >= df['unique_cloners'])
+    swamped_day = (df['own_ci_est'] > 0) & (df['own_ci_est'] * df['unique_rate'] >= df['unique_cloners'])
     swamped = swamped_day.groupby(df['repo_name']).mean() > 0.5
 
     conn = sqlite3.connect(db_path)
@@ -1093,7 +1119,7 @@ def generate_outside_cumulative(db_path: str, output_path: str):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(True, linestyle='--', alpha=0.3)
-    fig.text(0.5, -0.04, 'Removed: repeat clones (same machine, same day) and our CI estimate. Each line starts when '
+    fig.text(0.5, -0.04, 'Removed: repeat clones (same cloner, same day) and the unique cloners our CI accounts for. Each line starts when '
              'its CI estimate starts.\n"(floor)": our CI matched or exceeded the unique cloners on most days, so outside '
              f'traffic there is hidden, not absent. Not shown: gitgalaxy PyPI, {_fmt_count(pypi_total)} raw downloads '
              '(cannot be split).', ha='center', fontsize=9, color='#555555')
