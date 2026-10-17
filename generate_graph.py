@@ -7,6 +7,92 @@ from aggregation import all_time_window_totals
 
 CUTOFF_DATE = pd.Timestamp.now().normalize() - pd.Timedelta(days=3)
 
+# (column, label, color, linestyle, linewidth) for the cumulative chart, drawn
+# top-down in this order. Columns are repo names or the gitgalaxy_* rollups.
+CUMULATIVE_SERIES = [
+    ('gitgalaxy_total', 'GitGalaxy (Total)', 'red', '--', 3),
+    ('gitgalaxy_github', 'GitGalaxy (GitHub)', '#1f77b4', '--', 2),
+    ('gitgalaxy_pypi', 'GitGalaxy (PyPI)', '#ff7f0e', '--', 2),
+    ('gitgalaxy_gitlab', 'GitGalaxy (GitLab)', '#9467bd', '--', 2),
+    # Crucibles
+    ('squid-protocol/language-crucible', 'language-crucible', 'green', '-', 2.5),
+    ('squid-protocol/cics-crucible', 'cics-crucible', '#17becf', '-', 2.5),
+    ('squid-protocol/estate-crucible', 'estate-crucible', '#bcbd22', '-', 2.5),
+    ('squid-protocol/temporal-crucible', 'temporal-crucible', '#2f4f4f', '-', 2.5),
+    # AI harness
+    ('squid-protocol/squid-bot', 'squid-bot', '#8c564b', '-.', 2.5),
+    ('squid-protocol/promoter-bot', 'promoter-bot', '#e377c2', '-.', 2.5),
+]
+
+def _fmt_count(v):
+    """165330 -> '165k', 9673 -> '9.7k', 412 -> '412'."""
+    if v >= 1e6:
+        return f'{v / 1e6:.1f}M'.replace('.0M', 'M')
+    if v >= 1e4:
+        return f'{v / 1e3:.0f}k'
+    if v >= 1e3:
+        return f'{v / 1e3:.1f}k'.replace('.0k', 'k')
+    return f'{v:.0f}'
+
+def _spread_positions(positions, min_gap, upper=1.0):
+    """
+    Nudges label positions (axes fractions, 0..1) apart so neighbors are at
+    least min_gap away, moving each as little as possible, and keeps the
+    stack under `upper`. Returns adjusted positions in the input order.
+    """
+    order = sorted(range(len(positions)), key=lambda i: positions[i])
+    placed = []
+    for i in order:
+        y = positions[i]
+        if placed and y - placed[-1] < min_gap:
+            y = placed[-1] + min_gap
+        placed.append(y)
+    # If the stack overflowed the top, slide it back down from the top.
+    for k in range(len(placed) - 1, -1, -1):
+        ceiling = upper if k == len(placed) - 1 else placed[k + 1] - min_gap
+        placed[k] = min(placed[k], ceiling)
+    out = [0.0] * len(positions)
+    for i, y in zip(order, placed):
+        out[i] = y
+    return out
+
+def _add_smart_end_labels(ax, cumulative_df, series, min_gap_frac=0.04):
+    """
+    Labels each line at its own last point with its name and running total
+    (e.g. 'cics-crucible  412'), in the line's color. Spacing is done in
+    axes-fraction space, so it works on the log axis; a label that had to
+    move off its line's end gets a thin leader line back to it.
+    """
+    import matplotlib.transforms as mtransforms
+
+    ends = []
+    for col, label, color, _, _ in series:
+        if col not in cumulative_df.columns:
+            continue
+        s = cumulative_df[col].dropna()
+        if s.empty:
+            continue
+        ends.append((s.index[-1], s.iloc[-1], f'{label}  {_fmt_count(s.iloc[-1])}', color))
+    if not ends:
+        return
+
+    first_x, last_x = cumulative_df.index.min(), cumulative_df.index.max()
+    # Reserve room to the right of the data for the labels themselves.
+    ax.set_xlim(first_x, last_x + (last_x - first_x) * 0.30)
+    to_frac = lambda y: ax.transAxes.inverted().transform(ax.transData.transform((0, y)))[1]
+    fracs = [to_frac(y) for _, y, _, _ in ends]
+    spread = _spread_positions(fracs, min_gap_frac, upper=0.98)
+
+    label_x = last_x + (last_x - first_x) * 0.03
+    text_coords = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+    for (x, y, text, color), frac, target in zip(ends, fracs, spread):
+        moved = abs(target - frac) > 0.005
+        ax.annotate(text, xy=(x, y), xycoords='data', xytext=(label_x, target),
+                    textcoords=text_coords, color=color, va='center', ha='left',
+                    fontsize=10, fontweight='bold',
+                    arrowprops=dict(arrowstyle='-', color=color, lw=0.8, alpha=0.6) if moved else None)
+
+
 def generate_cumulative_graph(db_path: str, output_path: str):
     # 1. Connect to the database and extract the daily totals
     conn = sqlite3.connect(db_path)
@@ -66,53 +152,35 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     df['date'] = pd.to_datetime(df['date'])
     df = df[df['date'] <= CUTOFF_DATE]
     
-    # Pivot the data without filling NaN with 0. 
-    # This ensures pandas .cumsum() naturally starts drawing each line 
-    # exactly at its respective first date of collected data.
+    # Zero-fill gaps so .cumsum() runs, then blank out each series until its
+    # first nonzero day: a repo added to TARGET_REPOS later starts its line
+    # where its data starts instead of trailing a fake flat zero (which the
+    # log axis below couldn't draw anyway).
     pivot_df = df.pivot(index='date', columns='repo_name', values='daily_downloads').fillna(0)
-    
-    # Calculate cumulative sum for all series
     cumulative_df = pivot_df.cumsum()
+    cumulative_df = cumulative_df.where(cumulative_df > 0)
 
     # 3. Render the Professional Graph
     import matplotlib.dates as mdates
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Plot target total first for top legend ordering
-    if 'gitgalaxy_total' in cumulative_df.columns:
-        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_total'], 
-                color='red', linewidth=3, label='GitGalaxy (Total)', zorder=10)
-                
-    # Plot GitGalaxy component lines 
-    if 'gitgalaxy_github' in cumulative_df.columns:
-        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_github'], 
-                color='#1f77b4', linewidth=2, linestyle='--', label='GitGalaxy (GitHub)', zorder=9)
-    if 'gitgalaxy_pypi' in cumulative_df.columns:
-        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_pypi'], 
-                color='#ff7f0e', linewidth=2, linestyle='--', label='GitGalaxy (PyPI)', zorder=9)
-    if 'gitgalaxy_gitlab' in cumulative_df.columns:
-        ax.plot(cumulative_df.index, cumulative_df['gitgalaxy_gitlab'], 
-                color='#9467bd', linewidth=2, linestyle='--', label='GitGalaxy (GitLab)', zorder=9)
-                
-    # Plot language-crucible in green
-    if 'squid-protocol/language-crucible' in cumulative_df.columns:
-        ax.plot(cumulative_df.index, cumulative_df['squid-protocol/language-crucible'], 
-                color='green', linewidth=2.5, label='language-crucible', zorder=8)
-    
-    # Plot the remaining negative controls in light gray as a grouped background layer
-    added_baseline = False
-    for repo in cumulative_df.columns:
-        if repo not in ['gitgalaxy_total', 'gitgalaxy_github', 'gitgalaxy_pypi', 'gitgalaxy_gitlab', 'squid-protocol/language-crucible']:
-            if not added_baseline:
-                ax.plot(cumulative_df.index, cumulative_df[repo], color='lightgray', 
-                        alpha=0.8, linewidth=1.5, label='Baseline Repo Examples', zorder=1)
-                added_baseline = True
-            else:
-                ax.plot(cumulative_df.index, cumulative_df[repo], color='lightgray', 
-                        alpha=0.8, linewidth=1.5, zorder=1)
-    
-    # Formatting the chart
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FuncFormatter
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Only the GitGalaxy ecosystem is plotted; the old negative-control repos
+    # are still scraped (history accrues) but deliberately left off.
+    # Line style encodes the group, color the individual series.
+    for zorder, (col, label, color, style, width) in enumerate(reversed(CUMULATIVE_SERIES), start=1):
+        if col in cumulative_df.columns:
+            ax.plot(cumulative_df.index, cumulative_df[col], color=color, linestyle=style,
+                    linewidth=width, label=label, zorder=zorder)
+
+    # Log scale: GitGalaxy is ~10^5 clones while a new crucible is ~10^1; on a
+    # linear axis everything but GitGalaxy would sit flat on the floor.
+    ax.set_yscale('log')
+    ax.set_ylim(bottom=1)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _fmt_count(v)))
+
     # NOTE: deliberately not labeled "Unique Fetches" -- PyPI's without_mirrors
     # count is raw download EVENTS (no dedup possible, PyPI's public dataset
     # has no identity to dedup against), GitHub's total_clones is likewise a
@@ -121,17 +189,21 @@ def generate_cumulative_graph(db_path: str, output_path: str):
     # genuinely deduplicated (per-project, per GitLab's own docs). Summing
     # them is a useful combined *volume* signal, but not a "unique adopters"
     # count -- see the separate human-vs-CI chart for that story instead.
-    ax.set_title("Cumulative Distribution Volume of GitGalaxy (PyPI Without Mirrors)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_title("Cumulative Distribution Volume: GitGalaxy Ecosystem", fontsize=16, pad=20, fontweight='bold')
     ax.set_xlabel("Date", fontsize=12, labelpad=10)
-    ax.set_ylabel("Combined Distribution Volume", fontsize=12, labelpad=10)
-    
+    ax.set_ylabel("Combined Distribution Volume (log scale)", fontsize=12, labelpad=10)
+
     # Format X-axis dates to Year-Month (YYYY-MM)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     plt.xticks(rotation=45)
-    
-    # Add a legend
-    ax.legend(loc='upper left', fontsize=10)
-    
+
+    # Series are named by the smart labels at each line's end; the legend
+    # only decodes the line-style groups.
+    _add_smart_end_labels(ax, cumulative_df, CUMULATIVE_SERIES)
+    group_keys = [Line2D([], [], color='#555555', linestyle=style, linewidth=2, label=name)
+                  for name, style in (('GitGalaxy engine', '--'), ('Crucibles', '-'), ('AI harness', '-.'))]
+    ax.legend(handles=group_keys, loc='upper left', fontsize=10, frameon=False)
+
     # Clean up the bounding box
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
