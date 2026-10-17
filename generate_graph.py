@@ -6,6 +6,7 @@ from matplotlib.ticker import FuncFormatter
 import requests
 from aggregation import all_time_window_totals
 
+ENGINE = 'squid-protocol/gitgalaxy'
 CUTOFF_DATE = pd.Timestamp.now().normalize() - pd.Timedelta(days=3)
 
 # (column, label, color, linestyle, linewidth) for the cumulative chart, drawn
@@ -924,31 +925,57 @@ def split_clone_sources(total, unique, own_ci_est):
     own_ci = min(max(0, own_ci_est), unique)
     return {'own_ci': own_ci, 'repeat': repeat, 'outside': unique - own_ci}
 
-def generate_clone_sources(db_path: str, output_path: str, window_days=28, panels=6):
-    """Summary bar (whole window) plus daily panels for the busiest repos."""
-    import matplotlib.dates as mdates
+def _clone_split_frame(db_path: str):
+    """
+    Per repo-day GitHub clones with split_clone_sources' parts added, plus
+    `ci_since`: the first day we have an own-CI estimate for that repo (before
+    it, `own_ci` is unknown, not zero). gitgalaxy falls back to the older
+    engine-only own_ci_clones table, which reaches back further.
+    Returns (df, names) or (None, names) when there is nothing to split.
+    """
     conn = sqlite3.connect(db_path)
     clones = pd.read_sql_query(
         "SELECT repo_name, date, total_clones, unique_cloners FROM traffic_clones", conn)
-    try:
-        own = pd.read_sql_query(
-            "SELECT target_repo AS repo_name, date, SUM(est_clones) AS own_ci_est "
-            "FROM own_ci_checkouts GROUP BY target_repo, date", conn)
-    except Exception:
-        own = pd.DataFrame(columns=['repo_name', 'date', 'own_ci_est'])
+    def _read(sql, cols):
+        try:
+            return pd.read_sql_query(sql, conn)
+        except Exception:  # table not created yet on an old DB
+            return pd.DataFrame(columns=cols)
+    own = _read("SELECT target_repo AS repo_name, date, SUM(est_clones) AS own_ci_est "
+                "FROM own_ci_checkouts GROUP BY target_repo, date", ['repo_name', 'date', 'own_ci_est'])
+    engine = _read("SELECT date, SUM(est_clones) AS engine_est FROM own_ci_clones GROUP BY date",
+                   ['date', 'engine_est'])
     conn.close()
 
     names = {col: label for col, label, *_ in CUMULATIVE_SERIES if col.startswith('squid-protocol/')}
     names['squid-protocol/gitgalaxy'] = 'gitgalaxy'
     clones = clones[clones['repo_name'].isin(names)]
     if clones.empty:
-        return
-    df = clones.merge(own, on=['repo_name', 'date'], how='left').fillna({'own_ci_est': 0})
+        return None, names
+    df = clones.merge(own, on=['repo_name', 'date'], how='left')
+    engine['repo_name'] = ENGINE
+    df = df.merge(engine, on=['repo_name', 'date'], how='left')
+    df['own_ci_est'] = df['own_ci_est'].fillna(df['engine_est']).fillna(0)
     df['date'] = pd.to_datetime(df['date'])
-    df = df[(df['date'] <= CUTOFF_DATE) & (df['date'] > CUTOFF_DATE - pd.Timedelta(days=window_days))]
+    df = df[df['date'] <= CUTOFF_DATE]
+
+    checkouts_since = pd.to_datetime(own['date']).min() if not own.empty else pd.NaT
+    engine_since = pd.to_datetime(engine['date']).min() if not engine.empty else pd.NaT
+    df['ci_since'] = checkouts_since
+    df.loc[df['repo_name'] == ENGINE, 'ci_since'] = min(
+        d for d in (engine_since, checkouts_since, pd.Timestamp.max) if pd.notna(d))
+
     parts = df.apply(lambda r: pd.Series(split_clone_sources(
         int(r.total_clones), int(r.unique_cloners), int(r.own_ci_est))), axis=1)
-    df = pd.concat([df, parts], axis=1)
+    return pd.concat([df, parts], axis=1), names
+
+def generate_clone_sources(db_path: str, output_path: str, window_days=28, panels=6):
+    """Summary bar (whole window) plus daily panels for the busiest repos."""
+    import matplotlib.dates as mdates
+    df, names = _clone_split_frame(db_path)
+    if df is None:
+        return
+    df = df[df['date'] > CUTOFF_DATE - pd.Timedelta(days=window_days)]
     keys = [k for k, _, _ in SOURCE_PARTS]
 
     totals = df.groupby('repo_name')[keys].sum()
@@ -1008,6 +1035,72 @@ def generate_clone_sources(db_path: str, output_path: str, window_days=28, panel
     plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     print(f"Graph successfully rendered to: {output_path}")
 
+def generate_outside_cumulative(db_path: str, output_path: str):
+    """
+    The cumulative chart again, linear, but counting only each repo's "possibly
+    outside" clones (split_clone_sources: repeat clones and our CI estimate
+    removed). A line starts on the first day its CI estimate exists, so repos
+    start at different times. A repo whose CI estimate meets or exceeds its
+    unique cloners on most days is labeled "(floor)": GitHub folds many CI
+    runners into one unique cloner, so there the subtraction wipes out the day
+    and outside traffic is invisible, not zero. PyPI can't be split (no
+    per-machine data); its raw total goes in the footnote, not on the plot.
+    """
+    import matplotlib.dates as mdates
+    from matplotlib.lines import Line2D
+    df, names = _clone_split_frame(db_path)
+    if df is None:
+        return
+    df = df[df['date'] >= df['ci_since']]
+    pivot = df.pivot_table(index='date', columns='repo_name', values='outside', aggfunc='sum')
+    # NaN until a repo's estimate starts, then a running total from there.
+    cumulative = pivot.cumsum().where(pivot.notna().cummax())
+
+    # A day is swamped when our CI estimate is nonzero and covers every unique cloner.
+    swamped_day = (df['own_ci_est'] > 0) & (df['own_ci_est'] >= df['unique_cloners'])
+    swamped = swamped_day.groupby(df['repo_name']).mean() > 0.5
+
+    conn = sqlite3.connect(db_path)
+    pypi_total = pd.read_sql_query(
+        "SELECT SUM(downloads) AS n FROM pypi_downloads WHERE repo_name = ? AND date <= ?",
+        conn, params=(ENGINE, CUTOFF_DATE.strftime('%Y-%m-%d')))['n'].iloc[0] or 0
+    conn.close()
+
+    series = []
+    for col, label, color, style, width in CUMULATIVE_SERIES:
+        repo = ENGINE if col == 'gitgalaxy_github' else col
+        if repo in cumulative.columns and col not in ('gitgalaxy_total', 'gitgalaxy_pypi', 'gitgalaxy_gitlab'):
+            label = 'gitgalaxy (GitHub)' if repo == ENGINE else label
+            series.append((repo, label + (' (floor)' if swamped.get(repo) else ''), color, style, width))
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+    for zorder, (col, label, color, style, width) in enumerate(reversed(series), start=1):
+        ax.plot(cumulative.index, cumulative[col], color=color, linestyle=style,
+                linewidth=width, label=label, zorder=zorder)
+    ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _fmt_count(v)))
+    ax.set_title("Cumulative Clones, Our Own Traffic Removed (estimate)", fontsize=16, pad=20, fontweight='bold')
+    ax.set_xlabel("Date", fontsize=12, labelpad=10)
+    ax.set_ylabel("Possibly-outside clones (cumulative)", fontsize=12, labelpad=10)
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.xticks(rotation=45)
+    _add_smart_end_labels(ax, cumulative, series)
+    group_keys = [Line2D([], [], color='#555555', linestyle=style, linewidth=2, label=name)
+                  for name, style in (('GitGalaxy engine', '--'), ('Crucibles', '-'),
+                                      ('AI harness', '-.'), ('Evidence & examples', ':'))]
+    ax.legend(handles=group_keys, loc='upper left', fontsize=10, frameon=False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, linestyle='--', alpha=0.3)
+    fig.text(0.5, -0.04, 'Removed: repeat clones (same machine, same day) and our CI estimate. Each line starts when '
+             'its CI estimate starts.\n"(floor)": our CI matched or exceeded the unique cloners on most days, so outside '
+             f'traffic there is hidden, not absent. Not shown: gitgalaxy PyPI, {_fmt_count(pypi_total)} raw downloads '
+             '(cannot be split).', ha='center', fontsize=9, color='#555555')
+    plt.tight_layout()
+    plt.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    print(f"Graph successfully rendered to: {output_path}")
+
 if __name__ == "__main__":
     db = "traffic_metrics.db"
     generate_cumulative_graph(db, "cumulative_downloads.png")
@@ -1018,3 +1111,4 @@ if __name__ == "__main__":
     generate_human_vs_ci_adoption(db, "human_vs_ci_adoption.png")
     generate_clones_self_traffic(db, "clones_self_traffic.png")
     generate_clone_sources(db, "clone_sources.png")
+    generate_outside_cumulative(db, "cumulative_outside.png")
